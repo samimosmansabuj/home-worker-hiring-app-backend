@@ -26,6 +26,24 @@ class OrderRequestSerializerForOrder(serializers.ModelSerializer):
             "phone": provider.phone,
         }
         return data
+    
+    def validate(self, attrs):
+        order = self.context["order"]
+        request = self.context.get("request")
+        user = request.user
+        profile_type = request.headers.get("PROFILE-TYPE")
+        if not profile_type:
+            raise Exception("Profile Type must be set in headers.")
+        if order.customer.user == user:
+            raise Exception("Same user can't send order request.")
+        if profile_type.upper() != UserDefault.PROVIDER:
+            raise Exception("Only providers can send order requests.")
+        if OrderRequest.objects.filter(order=order, provider=user.hasServiceProviderProfile).exists():
+            raise Exception("You already applied for this order.")
+        if not (order.budget_min <= attrs["budget"] <= order.budget_max):
+            raise Exception("Budget out of range.")
+        attrs["provider"] = user.hasServiceProviderProfile
+        return attrs
 
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -37,6 +55,16 @@ class OrderSerializer(serializers.ModelSerializer):
         read_only_fields = ("customer",)
     
     def validate(self, attrs):
+        request = self.context.get("request")
+        profile_type = request.headers.get("profile-type", "").upper()
+        method = request.method
+        
+        if profile_type.upper() == UserDefault.PROVIDER:
+            raise Exception("Provider can't Change Customer Order Details.")
+        elif profile_type.upper() == UserRole.ADMIN:
+            if method in ("POST"):
+                raise Exception("Admin can't create an Order.")
+        
         if attrs.get("budget_min") and attrs.get("budget_max"):
             if attrs.get("budget_min") > attrs.get("budget_max"):
                 raise Exception("Minimum budget cannot exceed maximum budget!")
@@ -103,6 +131,12 @@ class OrderRequestSerializer(serializers.ModelSerializer):
         model = OrderRequest
         fields = "__all__"
         read_only_fields = ["provider"]
+    
+
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        return data
     
     def validate(self, attrs):
         order = self.context["order"]

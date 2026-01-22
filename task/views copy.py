@@ -10,7 +10,6 @@ from find_worker_config.permissions import IsAuthenticatedForWrite, IsCustomer, 
 from chat_notify.utils import push_notify_all, push_notify_role, push_notification
 from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, OrderRequestStatus
 from django.db.models import Q
-from rest_framework import views
 
 class ServiceCategoryViewSet(UpdateModelViewSet):
     queryset = ServiceCategory.objects.all()
@@ -27,19 +26,7 @@ class ServiceCategoryViewSet(UpdateModelViewSet):
         )
         return super().perform_update(serializer)
 
-
-class OrderViewMixing:
-    def isCustomerObjectUser(self, user1, user2):
-        if user1 != user2:
-            raise PermissionError("You do not have permission to perform this action.")
-    
-    def check_provider_in_request(self, provider: object, order_requests: queryset):
-        for order_request in order_requests:
-            if order_request.provider_id == provider.id:
-                return order_request
-        return None
-
-class OrderViewSets(UpdateModelViewSet, OrderViewMixing):
+class OrderViewSets(UpdateModelViewSet):
     queryset = Order.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = OrderSerializer
@@ -94,21 +81,7 @@ class OrderViewSets(UpdateModelViewSet, OrderViewMixing):
                 )
                 .distinct()
             )
-        elif order_type == "active-order":
-            order = (
-                Order.objects
-                .select_related("category", "provider")
-                .prefetch_related("order_requests")
-                .filter(
-                    Q(
-                        status__in=[
-                            OrderStatus.ACTIVE
-                        ]
-                    )
-                )
-                .distinct()
-            )
-        elif order_type == "all-order":
+        elif order_type == "all":
             order = (
                 Order.objects
                 .select_related("category", "provider")
@@ -171,8 +144,6 @@ class OrderViewSets(UpdateModelViewSet, OrderViewMixing):
         )
 
     def admin_get_queryset(self):
-        if self.request.user.role != UserRole.ADMIN:
-            raise Exception("Only Admin User can Access.")
         return Order.objects.select_related(
             "category", "provider"
         ).prefetch_related(
@@ -185,10 +156,9 @@ class OrderViewSets(UpdateModelViewSet, OrderViewMixing):
             return self.customer_get_queryset()
         elif profile_type.upper() == UserDefault.PROVIDER:
             return self.provider_get_queryset()
-        elif profile_type.upper() == UserRole.ADMIN:
-            return self.admin_get_queryset()
         else:
             raise Exception("Profile Type must be set in headers.")
+            # return self.customer_get_queryset()
     
     # =============== Get QuerySet ===============
     # ============================================
@@ -197,8 +167,7 @@ class OrderViewSets(UpdateModelViewSet, OrderViewMixing):
     def send_request(self, request, *args, **kwargs):
         if request.method == "POST":
             try:
-                order = self.get_object()
-                # order = self.get_order(self.kwargs.get("pk"))
+                order = self.get_order(self.kwargs.get("pk"))
                 request_serializer = OrderRequestSerializer(data=request.data, context={"request": request, "order": order})
                 request_serializer.is_valid(raise_exception=True)
                 request_serializer.save(order=order)
@@ -217,15 +186,15 @@ class OrderViewSets(UpdateModelViewSet, OrderViewMixing):
                     }, status=status.HTTP_400_BAD_REQUEST
                 )
         if request.method == "GET":
-            order = self.get_object()
+            order = self.get_order(self.kwargs.get("pk"))
             user = self.get_user()
-            profile_type = self.request.headers.get("profile-type", "").upper()
+            profile_type = self.request.headers.get("profile-type", "")
 
-            if profile_type == UserDefault.CUSTOMER and order.customer == user.hasCustomerProfile:
+            if order.customer == user.hasCustomerProfile:
                 get_response = OrderRequestSerializerForOrder(order.order_requests.all(), many=True).data
-            elif profile_type == UserRole.ADMIN and user.role == UserRole.ADMIN:
+            elif user.role == UserRole.ADMIN:
                 get_response = OrderRequestSerializerForOrder(order.order_requests.all(), many=True).data
-            elif profile_type == UserDefault.PROVIDER and user.hasServiceProviderProfile:
+            elif profile_type.upper() == UserDefault.PROVIDER and user.hasServiceProviderProfile:
                 order_requests = order.order_requests.all()
                 order_request = self.check_provider_in_request(user.hasServiceProviderProfile, order_requests)
                 if order_request:
@@ -233,7 +202,7 @@ class OrderViewSets(UpdateModelViewSet, OrderViewMixing):
                 else:
                     get_response = "You have no request for this order!"
             else:
-                get_response = "No request for this order!"
+                get_response = "You have no request for this order!"
             return Response(
                 {
                     "status": True,
@@ -248,21 +217,30 @@ class OrderViewSets(UpdateModelViewSet, OrderViewMixing):
                 }, status=status.HTTP_405_METHOD_NOT_ALLOWED
             )
     
+    def check_provider_in_request(self, provider: object, order_requests: queryset):
+        for order_request in order_requests:
+            if order_request.provider_id == provider.id:
+                return order_request
+        return  None
+    
+    def isCustomerObjectUser(self, user1, user2):
+        if user1 != user2:
+            raise PermissionError("You do not have permission to perform this action.")
+
     @action(detail=True, methods=["post", "get"], url_path=r"send-request/(?P<request_id>\d+)")
     def send_request_action(self, request, *args, **kwargs):
         request_id = self.kwargs.get("request_id")
-        order = self.get_object()
+        # order_request = self.get_order_request(request_id)
+        order = self.get_order(self.kwargs.get("pk"))
         user = self.get_user()
         profile_type = request.headers.get("PROFILE-TYPE")
         
 
         if request.method == "POST":
-            # if profile_type in (UserDefault.PROVIDER, UserRole.ADMIN):
-            #     raise PermissionError("Only Customer can action!")
             self.isCustomerObjectUser(order.customer.user, user)
             order_request = OrderRequest.objects.get(id=request_id, order=order)
             data = request.data
-            status_action = data.get("status_action", "").upper()
+            status_action = data.get("status_action").upper()
             if status_action in (OrderRequestStatus.ACCEPTED, OrderRequestStatus.PENDING, OrderRequestStatus.REJECTED):
                 order_request.status=status_action
                 order_request.save(update_fields={"status": status})
