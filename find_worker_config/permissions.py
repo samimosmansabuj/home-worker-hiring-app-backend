@@ -63,3 +63,68 @@ class IsValidFrontendRequest(BasePermission):
 
         return app_key == settings.FRONTEND_APP_KEY
 
+
+
+
+# ===================New Permission Start======================
+class HasCustomerProfileSafeModeTypeHeader(BasePermission):
+    def has_permission(self, request, view):
+        profile_type = request.headers.get("profile-type", "").lower()
+        if not profile_type:
+            return False
+        user = request.user
+        if not user.is_authenticated:
+            return False
+        if request.method in ("POST", "PATCH", "PUT", "DELETE"):
+            if profile_type != "customer":
+                return False
+
+        if profile_type == "customer":
+            return hasattr(user, "customer_profile")
+        elif profile_type == "provider":
+            return hasattr(user, "service_provider_profile")
+        else:
+            return False
+
+
+class ForCustomerProfile(BasePermission):
+    def has_permission(self, request, view):
+        profile_type = request.headers.get("profile-type", "").lower()
+        if not profile_type:
+            return False
+        user = request.user
+        if not user.is_authenticated:
+            return False
+        if profile_type == "customer":
+            return hasattr(user, "customer_profile")
+        else:
+            return False
+
+class ForProviderProfile(BasePermission):
+    def has_permission(self, request, view):
+        profile_type = request.headers.get("profile-type", "").lower()
+        if not profile_type:
+            return False
+        user = request.user
+        if not user.is_authenticated:
+            return False
+        if profile_type == "provider":
+            return hasattr(user, "service_provider_profile")
+        else:
+            return False
+# ===================New Permission End======================
+
+
+
+class IsCustomer(BasePermission):
+    def has_permission(self, request, view):
+        return hasattr(request.user, "hasCustomerProfile")
+
+class IsProvider(BasePermission):
+    def has_permission(self, request, view):
+        return hasattr(request.user, "hasServiceProviderProfile")
+
+class IsAdmin(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.role == UserRole.ADMIN
+

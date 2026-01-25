@@ -28,11 +28,47 @@ INSTALLED_APPS = [
     'corsheaders', 'django_extensions', 'django_filters',
     'rest_framework_simplejwt.token_blacklist',
     
+    # Auth
+    'social_django',
+    
 
     # custom app
-    'account', 'chat_notify', 'task', 'order', 'wallet',
+    'account', 'chat_notify', 'task', 'wallet',
     
 ]
+
+# ================================================================================
+# ==================== Authenticatino BackendStart====================
+AUTHENTICATION_BACKENDS = (
+    "social_core.backends.google.GoogleOAuth2",
+    "social_core.backends.apple.AppleIdAuth",
+    "django.contrib.auth.backends.ModelBackend",
+)
+SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.getenv('GOOGLE_OAUTH2_KEY')
+SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.getenv('GOOGLE_OAUTH2_SECRET')
+SOCIAL_AUTH_GOOGLE_OAUTH2_SCOPE = [
+    "email",
+    "profile",
+]
+
+
+# SOCIAL_AUTH_APPLE_ID_CLIENT = "com.your.app.service"
+# SOCIAL_AUTH_APPLE_ID_TEAM = "APPLE_TEAM_ID"
+# SOCIAL_AUTH_APPLE_ID_KEY = "KEY_ID"
+# SOCIAL_AUTH_APPLE_ID_SECRET = """-----BEGIN PRIVATE KEY-----
+# YOUR_PRIVATE_KEY
+# -----END PRIVATE KEY-----"""
+
+# LOGIN_REDIRECT_URL = "/"
+# LOGOUT_REDIRECT_URL = "/"
+LOGIN_REDIRECT_URL = "/api/v1/auth/social/success/"
+LOGOUT_REDIRECT_URL = "/"
+
+
+SOCIAL_AUTH_JSONFIELD_ENABLED = True
+
+# ==================== Authenticatino BackendEnd====================
+# ================================================================================
 
 # ================================================================================
 # ==================== Rest Frame Work Configurations Start====================
@@ -206,3 +242,7 @@ DEFAULT_FROM_EMAIL = 'your_email@example.com'
 FRONTEND_APP_KEY=os.getenv("FRONTEND_APP_KEY")
 # =================API Extra Security================================
 # ==========================================================================================
+
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/'

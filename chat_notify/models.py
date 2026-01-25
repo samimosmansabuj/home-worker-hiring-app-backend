@@ -47,7 +47,7 @@ class Attachment(models.Model):
 
 
 class Notification(models.Model):
-    send = models.ForeignKey(User, on_delete=models.CASCADE)
+    received = models.ForeignKey(User, on_delete=models.CASCADE)
     title = models.CharField(max_length=255)
     type = models.CharField(max_length=50, blank=True, null=True, choices=NotifyType.choices)
     data = models.JSONField(default=dict, blank=True, null=True)

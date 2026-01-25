@@ -56,18 +56,33 @@ class JobRequestStatus(models.TextChoices):
 class OrderRequestStatus(models.TextChoices):
     PENDING = "PENDING"
     ACCEPTED = "ACCEPTED"
+    TERMINATE = "TERMINATE"
     REJECTED = "REJECTED"
 
 class OrderStatus(models.TextChoices):
-    PENDING = "PENDING"
     ACTIVE = "ACTIVE"
     ACCEPT = "ACCEPT"
-    HIRIED = "HIRIED"
+    CONFIRM = "CONFIRM"
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     PARTIAL_COMPLETE = "PARTIAL_COMPLETE"
     CANCELLED = "CANCELLED"
     REFUND = "REFUND"
+
+class OrderPaymentStatus(models.TextChoices):
+    UNPAID = "UNPAID"
+    PAID = "PAID"
+    DISBUSMENT = "DISBUSMENT"
+    PAID_TO_PROVIDER = "PAID_TO_PROVIDER"
+    CANCELLED = "CANCELLED"
+    REFUND = "REFUND"
+
+class ReviewRatingChoice(models.IntegerChoices):
+    ONE = 1
+    TWO = 2
+    THREE = 3
+    FOUR = 4
+    FIVE = 5
     
 
 

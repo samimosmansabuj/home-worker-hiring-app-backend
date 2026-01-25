@@ -11,7 +11,7 @@ from rest_framework.request import Request
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile
-from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer
+from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer
 from .utils import generate_otp
 from django.db.models import Q
 from find_worker_config.permissions import IsCustomer, IsValidFrontendRequest
@@ -20,6 +20,8 @@ from .models import User, OTP
 from .utils import generate_otp
 from find_worker_config.utils import UpdateModelViewSet
 from django.contrib.contenttypes.models import ContentType
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.permissions import IsAuthenticated
 
 
 class WelComeAPI(APIView):
@@ -260,6 +262,81 @@ class SignUpOTPVerifyView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
 
+class SignUpViews(APIView):
+    def post(self, request, *args, **kwargs):
+        try:
+            serializer = SignupSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(
+                {
+                    "status": True,
+                    "data": serializer.authenticated(serializer.instance)
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            return Response(
+                {
+                    'status': False,
+                    'message': error,
+                },status=status.HTTP_400_BAD_REQUEST
+            )
+
+# class SocialLoginCompleteView(APIView):
+#     # permission_classes = []
+#     def post(self, request, backend, *args, **kwargs):
+#         user = request.user
+#         refresh = RefreshToken.for_user(user)
+#         print("refresh: ", refresh)
+#         print("backend: ", backend)
+
+#         return Response({
+#             "access": str(refresh.access_token),
+#             "refresh": str(refresh),
+#             "user": {
+#                 "id": user.id,
+#                 "email": user.email,
+#                 "username": user.username,
+#             }
+#         })
+    
+#     def get(self, request, backend, *args, **kwargs):
+#         user = request.user
+#         refresh = RefreshToken.for_user(user)
+#         print("refresh: ", refresh)
+#         print("backend: ", backend)
+
+#         return Response({
+#             "access": str(refresh.access_token),
+#             "refresh": str(refresh),
+#             "user": {
+#                 "id": user.id,
+#                 "email": user.email,
+#                 "username": user.username,
+#             }
+#         })
+
+# class SocialAuthSuccessView(APIView):
+#     permission_classes = [IsAuthenticated]
+
+#     def get(self, request):
+#         user = request.user
+#         refresh = RefreshToken.for_user(user)
+
+#         return Response({
+#             "access": str(refresh.access_token),
+#             "refresh": str(refresh),
+#             "user": {
+#                 "id": user.id,
+#                 "email": user.email,
+#                 "username": user.username,
+#             }
+#         })
+
+# def social_auth_redirect(request, backend, *args, **kwargs):
+#     return HttpResponse("Success")
+
 # SignUp With OTP End===========================
 
 
@@ -289,6 +366,7 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
     
     def retrieve(self, request, *args, **kwargs):
         user_mode = request.query_params.get("user_mode")
+        self.get_user_mode_profile(user_mode)
         instance = self.get_object()
         return Response(
             {
@@ -300,7 +378,7 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
     def update(self, request, *args, **kwargs):
         user_mode = request.query_params.get("user_mode")
         try:
-            profile_object = self.get_user_mode_profile(user_mode)
+            self.get_user_mode_profile(user_mode)
             partial = kwargs.pop('partial', False)
             instance = self.get_object()
             serializer = UserInfoSerializer(instance, data=request.data, partial=partial, context={"user_mode": user_mode})

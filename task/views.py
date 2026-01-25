@@ -1,16 +1,18 @@
-from django.shortcuts import render
-from .serializers import ServiceCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder
+from django.shortcuts import render, get_object_or_404
+from .serializers import ServiceCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer
 from find_worker_config.utils import UpdateModelViewSet
-from .models import ServiceCategory, Order, OrderRequest
+from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import status, viewsets
-from find_worker_config.permissions import IsAuthenticatedForWrite, IsCustomer, IsServiceProvider, IsAdminWritePermissionOnly, IsServicePostCustomerGetOnly, IsCustomerPostServiceGetOnly
+from rest_framework.exceptions import ValidationError, PermissionDenied
+from find_worker_config.permissions import ForProviderProfile, IsAdminWritePermissionOnly, HasCustomerProfileSafeModeTypeHeader, ForCustomerProfile
 from chat_notify.utils import push_notify_all, push_notify_role, push_notification
 from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, OrderRequestStatus
 from django.db.models import Q
 from rest_framework import views
+from .services import OrderService
 
 class ServiceCategoryViewSet(UpdateModelViewSet):
     queryset = ServiceCategory.objects.all()
@@ -27,185 +29,225 @@ class ServiceCategoryViewSet(UpdateModelViewSet):
         )
         return super().perform_update(serializer)
 
+class OrderRequestViewSets(UpdateModelViewSet):
+    queryset = OrderRequest.objects.all()
+    permission_classes = [IsAuthenticated]
+    serializer_class = OrderRequestSerializer
 
-class OrderViewMixing:
-    def isCustomerObjectUser(self, user1, user2):
-        if user1 != user2:
-            raise PermissionError("You do not have permission to perform this action.")
+class ReviewAndRatingViewSets(UpdateModelViewSet):
+    queryset = ReviewAndRating.objects.all()
+    serializer_class = ReviewAndRatingSerializer
+    permission_classes = [IsAuthenticated, HasCustomerProfileSafeModeTypeHeader]
     
+    def get_user(self):
+        profile_type = self.request.headers.get("profile-type", "")
+        return self.request.user
+
+
+
+class CustomerOrderViewSet(UpdateModelViewSet):
+    serializer_class = OrderSerializer
+    permission_classes = [ForCustomerProfile]
+
+    def get_queryset(self):
+        return Order.objects.filter(
+            customer=self.request.user.hasCustomerProfile
+        ).prefetch_related("order_requests")
+
+    @action(detail=True, methods=["get"], url_path=r"requests(?:/(?P<request_id>\d+))?")
+    def requests(self, request, *args, **kwargs):
+        order = self.get_object()
+        request_id = kwargs.get("request_id")
+        if request_id:
+            order_request = get_object_or_404(
+                order.order_requests,
+                id=request_id
+            )
+            serializer = OrderRequestSerializerForOrder(order_request)
+            return Response(
+                {"status": True, "data": serializer.data},
+                status=status.HTTP_200_OK
+            )
+        serializer = OrderRequestSerializerForOrder(
+            order.order_requests.all(),
+            many=True
+        )
+        return Response(
+            {"status": True, "data": serializer.data},
+            status=status.HTTP_200_OK
+        )
+    
+    def order_action_permission(self, order, order_request, action_status):
+        if action_status not in (OrderRequestStatus.ACCEPTED, OrderRequestStatus.PENDING, OrderRequestStatus.REJECTED):
+            raise Exception("Wrong Status Value.")
+        if OrderRequest.objects.filter(order=order, status=OrderRequestStatus.ACCEPTED).exists():
+            raise Exception("Already one of request accepted!")
+        if order.customer.user == order_request.provider.user:
+            raise Exception("Same user can't accept the order request")
+        return True
+
+    @action(detail=True, methods=["post"], url_path="accept-request/(?P<request_id>\\d+)")
+    def accept_request(self, request, *args, **kwargs):
+        action_status = request.data.get("action_status", "").upper()
+        order = self.get_object()
+        order_request = OrderRequest.objects.get(
+            id=self.kwargs.get("request_id"),
+            order=order
+        )
+        if action_status == "CANCEL":
+            if order_request.status in [OrderRequestStatus.ACCEPTED] and order.status in [OrderStatus.ACCEPT, OrderStatus.CONFIRM]:
+                OrderRequest.objects.filter(
+                    order=order
+                ).exclude(
+                    provider=order_request.provider
+                ).update(status=OrderRequestStatus.PENDING)
+                order_request.status = OrderRequestStatus.PENDING
+                order_request.save(update_fields=["status"])
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Accepted Request Cancel."
+                    }
+                )
+            else:
+                raise Exception("You can't Cancel This Request.")
+        self.order_action_permission(order, order_request, action_status)
+        if action_status == OrderRequestStatus.REJECTED:
+            order_request.status = OrderRequestStatus.REJECTED
+            order_request.save(update_fields=["status"])
+        elif action_status == OrderRequestStatus.ACCEPTED:
+            OrderService.accept_order(order, order_request)
+        return Response({"status": True, "message": "Order Accepted"})
+
+class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = OrderSerializer
+    permission_classes = [IsAuthenticated, ForProviderProfile]
+
+    def get_queryset(self):
+        status = self.request.query_params.get("status")
+        
+        return Order.objects.filter(
+            status__in=[OrderStatus.ACTIVE]
+        )
+
+    def list(self, request, *args, **kwargs):
+        try:
+            response = super().list(request, *args, **kwargs)
+            return Response(
+                {
+                    'status': True,
+                    'count': len(response.data),
+                    'data': response.data
+                }, status=status.HTTP_200_OK
+            )
+        except PermissionDenied as e:
+            return Response(
+                {
+                    'status': False,
+                    'messgae': str(e),
+                }, status=status.HTTP_406_NOT_ACCEPTABLE
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'status': False,
+                    'messgae': str(e),
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(
+            {
+                'status': True,
+                'data': serializer.data
+            }, status=status.HTTP_200_OK
+        )
+
     def check_provider_in_request(self, provider: object, order_requests: queryset):
         for order_request in order_requests:
             if order_request.provider_id == provider.id:
                 return order_request
         return None
 
-class OrderViewSets(UpdateModelViewSet, OrderViewMixing):
-    queryset = Order.objects.all()
-    permission_classes = [IsAuthenticated]
-    serializer_class = OrderSerializer
-
-    def get_user(self):
-        return self.request.user
-    
-    def get_order(self, pk):
-        return Order.objects.get(pk=pk)
-    
-    def get_order_request(self, pk):
-        return OrderRequest.objects.get(pk=pk)
-    
-    # ============================================
-    # =============== Get QuerySet ===============
-    def provider_get_queryset(self):
-        user = self.get_user()
-        order_type = self.request.query_params.get("order_type")
-        if order_type == "confirm-order":
-            order = (
-                Order.objects
-                .select_related("category", "provider")
-                .prefetch_related("order_requests")
-                .filter(
-                    Q(
-                        order_requests__provider=user.hasServiceProviderProfile,
-                        status__in=[
-                            OrderStatus.HIRIED,
-                            OrderStatus.IN_PROGRESS,
-                            OrderStatus.COMPLETED,
-                            OrderStatus.PARTIAL_COMPLETE,
-                            OrderStatus.CANCELLED,
-                            OrderStatus.REFUND
-                        ]
-                    )
-                )
-                .distinct()
-            )
-        elif order_type == "request-order":
-            order = (
-                Order.objects
-                .select_related("category", "provider")
-                .prefetch_related("order_requests")
-                .filter(
-                    Q(
-                        order_requests__provider=user.hasServiceProviderProfile,
-                        status__in=[
-                            OrderStatus.ACTIVE,
-                            OrderStatus.ACCEPT
-                        ]
-                    )
-                )
-                .distinct()
-            )
-        elif order_type == "active-order":
-            order = (
-                Order.objects
-                .select_related("category", "provider")
-                .prefetch_related("order_requests")
-                .filter(
-                    Q(
-                        status__in=[
-                            OrderStatus.ACTIVE
-                        ]
-                    )
-                )
-                .distinct()
-            )
-        elif order_type == "all-order":
-            order = (
-                Order.objects
-                .select_related("category", "provider")
-                .prefetch_related("order_requests")
-                .filter(
-                    Q(
-                        status__in=[
-                            OrderStatus.ACTIVE
-                        ]
-                    )
-                    |
-                    Q(
-                        order_requests__provider=user.hasServiceProviderProfile,
-                        status__in=[
-                            OrderStatus.ACCEPT,
-                            OrderStatus.HIRIED,
-                            OrderStatus.IN_PROGRESS,
-                            OrderStatus.COMPLETED,
-                            OrderStatus.PARTIAL_COMPLETE,
-                            OrderStatus.CANCELLED,
-                            OrderStatus.REFUND
-                        ]
-                    )
-                )
-                .distinct()
-            )
-        else:
-            order = (
-                Order.objects
-                .select_related("category", "provider")
-                .prefetch_related("order_requests")
-                .filter(
-                    Q(
-                        order_requests__provider=user.hasServiceProviderProfile,
-                        status__in=[
-                            OrderStatus.ACTIVE,
-                            OrderStatus.ACCEPT,
-                            OrderStatus.HIRIED,
-                            OrderStatus.IN_PROGRESS,
-                            OrderStatus.COMPLETED,
-                            OrderStatus.PARTIAL_COMPLETE,
-                            OrderStatus.CANCELLED,
-                            OrderStatus.REFUND
-                        ]
-                    )
-                )
-                .distinct()
-            )
-        
-        return order
-    
-    def customer_get_queryset(self):
-        user = self.get_user()
-        return Order.objects.select_related(
-            "category", "provider"
-        ).prefetch_related(
-            "order_requests"
-        ).filter(
-            customer=user.hasCustomerProfile
-        )
-
-    def admin_get_queryset(self):
-        if self.request.user.role != UserRole.ADMIN:
-            raise Exception("Only Admin User can Access.")
-        return Order.objects.select_related(
-            "category", "provider"
-        ).prefetch_related(
-            "order_requests"
-        ).all()
-
-    def get_queryset(self):
-        profile_type = self.request.headers.get("profile-type", "")
-        if profile_type.upper() == UserDefault.CUSTOMER:
-            return self.customer_get_queryset()
-        elif profile_type.upper() == UserDefault.PROVIDER:
-            return self.provider_get_queryset()
-        elif profile_type.upper() == UserRole.ADMIN:
-            return self.admin_get_queryset()
-        else:
-            raise Exception("Profile Type must be set in headers.")
-    
-    # =============== Get QuerySet ===============
-    # ============================================
-    
     @action(detail=True, methods=["post", "get"], url_path="send-request")
     def send_request(self, request, *args, **kwargs):
         if request.method == "POST":
             try:
                 order = self.get_object()
-                # order = self.get_order(self.kwargs.get("pk"))
-                request_serializer = OrderRequestSerializer(data=request.data, context={"request": request, "order": order})
-                request_serializer.is_valid(raise_exception=True)
-                request_serializer.save(order=order)
+                serializer = OrderRequestSerializer(
+                    data=request.data,
+                    context={"request": request, "order": order}
+                )
+                serializer.is_valid(raise_exception=True)
+                serializer.save(
+                    order=order,
+                    provider=request.user.hasServiceProviderProfile
+                )
+                return Response(
+                    {"status": True, "data": serializer.data},
+                    status=status.HTTP_201_CREATED
+                )
+            except ValidationError:
+                error = {key: str(value[0]) for key, value in serializer.errors.items()}
+                return Response(
+                    {
+                        "status": False,
+                        "message": error
+                    }, status=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception as e:
+                return Response(
+                    {
+                        "status": False,
+                        "message": str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST
+                )
+        elif request.method == "GET":
+            order_requests = self.get_object().order_requests.all()
+            order_request = self.check_provider_in_request(request.user.hasServiceProviderProfile, order_requests)
+            if order_request:
+                get_response = OrderRequestSerializerForOrder(order_request).data
+            else:
+                get_response = "You have no request for this order!"
+            return Response(
+                {
+                    "status": True,
+                    "data": get_response
+                }, status=status.HTTP_200_OK
+            )
+
+    @action(detail=True, methods=["patch", "delete"], url_path="update-request")
+    def update_request(self, request, *args, **kwargs):
+        if request.method == "PATCH":
+            try:
+                order = self.get_object()
+                order_request = OrderRequest.objects.get(
+                    order=order,
+                    provider=request.user.hasServiceProviderProfile
+                )
+                if not order_request:
+                    raise Exception("You have not sent any request for this order.")
+                if order_request.status == OrderRequestStatus.ACCEPTED:
+                    raise Exception("Order Request Already Accepted.")
+                if order.status != OrderStatus.ACTIVE:
+                    raise Exception(f"Can't Update Your Request Right Now.")
+                
+                update_fields = []
+                if request.data.get("budget"):
+                    order_request.budget = request.data.get("budget")
+                    update_fields.append("budget")
+                if request.data.get("message"):
+                    order_request.message = request.data.get("message")
+                    update_fields.append("message")
+                if update_fields:
+                    order_request.save(update_fields=update_fields)
+                request_serializer = OrderRequestSerializer(order_request)
                 return Response(
                     {
                         "status": True,
-                        "message": "Request Succefully Send!",
+                        "message": "Request Update Succefully!",
                         "data": request_serializer.data
                     }, status=status.HTTP_200_OK
                 )
@@ -216,170 +258,41 @@ class OrderViewSets(UpdateModelViewSet, OrderViewMixing):
                         "message": str(e)
                     }, status=status.HTTP_400_BAD_REQUEST
                 )
-        if request.method == "GET":
-            order = self.get_object()
-            user = self.get_user()
-            profile_type = self.request.headers.get("profile-type", "").upper()
-
-            if profile_type == UserDefault.CUSTOMER and order.customer == user.hasCustomerProfile:
-                get_response = OrderRequestSerializerForOrder(order.order_requests.all(), many=True).data
-            elif profile_type == UserRole.ADMIN and user.role == UserRole.ADMIN:
-                get_response = OrderRequestSerializerForOrder(order.order_requests.all(), many=True).data
-            elif profile_type == UserDefault.PROVIDER and user.hasServiceProviderProfile:
-                order_requests = order.order_requests.all()
-                order_request = self.check_provider_in_request(user.hasServiceProviderProfile, order_requests)
-                if order_request:
-                    get_response = OrderRequestSerializerForOrder(order_request).data
-                else:
-                    get_response = "You have no request for this order!"
-            else:
-                get_response = "No request for this order!"
-            return Response(
-                {
-                    "status": True,
-                    "data": get_response
-                }, status=status.HTTP_200_OK
-            )
-        else:
-            return Response(
-                {
-                    "status": False,
-                    "message": f"{request.method} Not allowed"
-                }, status=status.HTTP_405_METHOD_NOT_ALLOWED
-            )
-    
-    @action(detail=True, methods=["post", "get"], url_path=r"send-request/(?P<request_id>\d+)")
-    def send_request_action(self, request, *args, **kwargs):
-        request_id = self.kwargs.get("request_id")
-        order = self.get_object()
-        user = self.get_user()
-        profile_type = request.headers.get("PROFILE-TYPE")
+        if request.method == "DELETE":
+            try:
+                order = self.get_object()
+                order_request = OrderRequest.objects.get(
+                    order=order,
+                    provider=request.user.hasServiceProviderProfile
+                )
+                # order_request.delete()
+                order_request.status = OrderRequestStatus.REJECTED
+                order_request.save(update_fields=["status"])
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Request Cancel Succefully!"
+                    }, status=status.HTTP_200_OK
+                )
+            except Exception as e:
+                return Response(
+                    {
+                        "status": False,
+                        "message": str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST
+                )
         
-
-        if request.method == "POST":
-            # if profile_type in (UserDefault.PROVIDER, UserRole.ADMIN):
-            #     raise PermissionError("Only Customer can action!")
-            self.isCustomerObjectUser(order.customer.user, user)
-            order_request = OrderRequest.objects.get(id=request_id, order=order)
-            data = request.data
-            status_action = data.get("status_action", "").upper()
-            if status_action in (OrderRequestStatus.ACCEPTED, OrderRequestStatus.PENDING, OrderRequestStatus.REJECTED):
-                order_request.status=status_action
-                order_request.save(update_fields={"status": status})
-            else:
-                raise Exception("Wrong status input.")
-            return Response(
-                {
-                    "status": True,
-                    "message": OrderRequestSerializerForOrder(order_request).data
-                }, status=status.HTTP_200_OK
-            )
-        elif request.method == "GET":
-            if user == order.customer.user:
-                order_request = OrderRequest.objects.get(id=request_id, order=order)
-            elif not profile_type:
-                raise Exception("Profile Type must be set in headers.")
-            elif profile_type.upper() == UserDefault.PROVIDER:
-                if not OrderRequest.objects.filter(id=request_id, order=order, provider=user.hasServiceProviderProfile).exists():
-                    raise Exception("You have no send request for this order!")
-                order_request = OrderRequest.objects.get(id=request_id, order=order, provider=user.hasServiceProviderProfile)
-            return Response(
-                {
-                    "status": True,
-                    "message": OrderRequestSerializerForOrder(order_request).data
-                }, status=status.HTTP_200_OK
-            )
-        else:
-            return Response(
-                {
-                    "status": False,
-                    "message": f"{request.method} Not allowed"
-                }, status=status.HTTP_405_METHOD_NOT_ALLOWED
-            )
-
-
-class OrderRequestViewSets(UpdateModelViewSet):
-    queryset = OrderRequest.objects.all()
-    permission_classes = [IsAuthenticated]
-    serializer_class = OrderRequestSerializer
+class AdminOrderViewSet(UpdateModelViewSet):
+    queryset = Order.objects.all()
+    serializer_class = OrderSerializer
+    permission_classes = [IsAuthenticated, ForProviderProfile]
 
 
 
-# ==============================================================================================
-# ==========================For User Start=================================
-# class ServiceTaskViewSet(UpdateModelViewSet):
-#     serializer_class = ServiceTaskForUserSerializer
-#     permission_classes = [IsCustomer]
+
+
+
+
+
+
     
-#     def get_queryset(self):
-#         return ServiceTask.objects.select_related(
-#             "category",
-#         ).prefetch_related(
-#             "requests"
-#         ).filter(customer=self.request.user)
-    
-#     def perform_update(self, serializer):
-#         push_notification(
-#             user_id=self.request.user.id,
-#             data={
-#                 "type": "TASK_UPDATED",
-#                 "message": "Your job has been updated"
-#             }
-#         )
-#         return super().perform_update(serializer)
-
-#     @action(detail=True, methods=["GET"], permission_classes=[IsAuthenticated])
-#     def requests(self, request, pk=None):
-#         task = self.get_object()
-#         qs = task.requests.select_related("provider")
-
-#         serializer = JobRequestSerializer(qs, many=True)
-#         return Response(serializer.data)
-
-# ==========================For User End=================================
-# ==============================================================================================
-
-
-
-# class ServicePrototypeViewSet(UpdateModelViewSet):
-#     serializer_class = ServicePrototypeReadSerializer
-#     permission_classes = [IsAuthenticatedForWrite, IsServiceProvider]
-
-#     def get_serializer_class(self):
-#         if self.request.method in ["POST", "PUT", "PATCH"]:
-#             return ServicePrototypeWriteSerializer
-#         return ServicePrototypeReadSerializer
-
-#     def get_queryset(self):
-#         return ServicePrototype.objects.select_related(
-#             "service_provider",
-#             "category"
-#         ).filter(service_provider=self.request.user)
-
-#     def perform_create(self, serializer):
-#         serializer.save(service_provider=self.request.user)
-
-# class TaskRequestViewSet(UpdateModelViewSet):
-#     serializer_class = TaskRequestReadSerializer
-#     permission_classes = [IsAuthenticated]
-
-#     def get_serializer_class(self):
-#         if self.request.method in ["POST", "PUT", "PATCH"]:
-#             return TaskRequestReadSerializer
-#         return TaskRequestWriteSerializer
-
-#     def get_queryset(self):
-#         user = self.request.user
-#         if user.role == "PROVIDER":
-#             return TaskRequest.objects.select_related(
-#                 "task", "provider"
-#             ).filter(provider=user)
-
-#         return TaskRequest.objects.select_related(
-#             "task", "provider"
-#         ).filter(task__customer=user)
-
-#     def perform_create(self, serializer):
-#         serializer.save(provider=self.request.user)
-
-

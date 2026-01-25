@@ -1,20 +1,17 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import ServiceCategoryViewSet, OrderViewSets
+from .views import ServiceCategoryViewSet, ReviewAndRatingViewSets, CustomerOrderViewSet, ProviderOrderViewSet
 
 
 router = DefaultRouter()
-router.register("categories", ServiceCategoryViewSet, basename="categories")
-router.register("order", OrderViewSets, basename="orders")
-# router.register("tasks", ServiceTaskViewSet, basename="tasks")
-# router.register("prototypes", ServicePrototypeViewSet, basename="prototypes")
-# router.register("job-requests", TaskRequestViewSet, basename="job-requests")
-
-# user_router = DefaultRouter()
-# user_router.register("tasks", ServiceTaskViewSet, basename="tasks")
+router.register(r"categories", ServiceCategoryViewSet, basename="categories")
+# router.register(r"order", OrderViewSets, basename="orders")
+router.register(r"customer/order", CustomerOrderViewSet, basename="customer_orders")
+router.register(r"provider/order", ProviderOrderViewSet, basename="provider_orders")
+router.register(r"review", ReviewAndRatingViewSets, basename="reviews")
 
 urlpatterns = [
     path("", include(router.urls)),
-    # path("user/", include(user_router.urls))
+    path("", include(router.urls)),
 ]
 
