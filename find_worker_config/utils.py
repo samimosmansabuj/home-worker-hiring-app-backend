@@ -7,6 +7,7 @@ from rest_framework import status as drf_status
 from find_worker_config.model_choice import PaymentCurrencyType, PaymentTransactionType, ServiceChargeType
 from wallet.models import PaymentTransaction, AdminWallet
 from django.db import transaction
+from django.contrib.contenttypes.models import ContentType
 
 class UpdateModelViewSet(ModelViewSet):
     delete_message = "Object Successfully Deleted!"
@@ -141,10 +142,10 @@ def log_activity(*, user, action: str, entity_type: str, entity_id=None, metadat
 
 
 class PaymentTransactionModule:
-    def __init__(self, user, amount, payment_method_information, reference_object, type, action, reference=None, currency=None, service_charge=None):
+    def __init__(self, user, amount, reference_object, type, action, payment_information={}, reference=None, currency=None, service_charge=None):
         self.user = user
         self.amount = amount
-        self.payment_method_information = payment_method_information or {}
+        self.payment_information = payment_information
         self.reference_object = reference_object
         self.type = type
         self.action = action
@@ -153,7 +154,8 @@ class PaymentTransactionModule:
         self.service_charge = service_charge
     
     def get_wallet(self):
-        return AdminWallet.objects.first()
+        wallet, _ = AdminWallet.objects.get_or_create()
+        return wallet
     
     def get_service_charge_amount(self, amount):
         charge_type = self.service_charge.get("type")
@@ -180,15 +182,22 @@ class PaymentTransactionModule:
             wallet.hold_balance -= amount
             wallet.total_withdraw += amount__
             wallet.current_balance += charge_amount
+        wallet.save(update_fields=[
+            "payment_balance",
+            "hold_balance",
+            "total_withdraw",
+            "current_balance",
+        ])
         return True
 
     def payment_transaction(self):
+        entity_type = ContentType.objects.get_for_model(self.reference_object)
         with transaction.atomic():
             payment_transaction = PaymentTransaction.objects.create(
                 user=self.user,
                 amount=self.amount,
-                payment_method_information=self.payment_method_information or {},
-                entity_type=self.reference_object,
+                payment_information=self.payment_information or {},
+                entity_type=entity_type,
                 entity_id=self.reference_object.id,
                 type=self.type,
                 action=self.action,
@@ -197,5 +206,6 @@ class PaymentTransactionModule:
             )
             self.update_wallet(payment_transaction)
             return True
+        raise Exception("Payment Transaction not update.")
 
 

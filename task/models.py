@@ -2,6 +2,8 @@ from django.db import models
 from account.models import User, CustomerProfile, ServiceProviderProfile
 from find_worker_config.model_choice import ServiceTaskStatus, ServicePrototypeStatus, JobRequestStatus, OrderStatus, OrderRequestStatus, ReviewRatingChoice, OrderPaymentStatus
 from django.db import transaction
+from django.contrib.contenttypes.fields import GenericRelation
+from wallet.models import PaymentTransaction
 
 class ServiceCategory(models.Model):
     title = models.CharField(max_length=255)
@@ -31,6 +33,14 @@ class Order(models.Model):
     status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.ACTIVE)
     payment_status = models.CharField(max_length=20, choices=OrderPaymentStatus.choices, default=OrderPaymentStatus.UNPAID)
     service_data = models.DateTimeField(blank=True, null=True)
+    confirmation_OTP = models.CharField(max_length=6, blank=True, null=True)
+
+    payment_transactions = GenericRelation(
+        PaymentTransaction,
+        content_type_field="entity_type",
+        object_id_field="entity_id",
+        related_query_name="order"
+    )
     
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -42,7 +52,7 @@ class Order(models.Model):
         if self.pk:
             old_status = Order.objects.get(pk=self.pk).status
             is_status_changed = old_status != self.status
-        if self.payment_status == OrderPaymentStatus.PAID:
+        if self.payment_status == OrderPaymentStatus.PAID and self.status in [OrderStatus.ACCEPT, OrderStatus.ACTIVE]:
             self.status = OrderStatus.CONFIRM
         super().save(*args, **kwargs)
 

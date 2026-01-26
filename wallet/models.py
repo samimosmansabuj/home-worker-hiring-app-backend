@@ -35,7 +35,7 @@ class PaymentTransaction(models.Model):
     amount = models.DecimalField(max_digits=9, decimal_places=2)
     currency = models.CharField(max_length=20, choices=PaymentCurrencyType.choices, default=PaymentCurrencyType.CA)
     type = models.CharField(max_length=20, choices=PaymentTransactionType.choices)
-    payment_method_information = models.JSONField(blank=True, null=True)
+    payment_information = models.JSONField(blank=True, null=True)
     reference = models.CharField(max_length=255, blank=True, null=True)
     action = models.CharField(max_length=50, choices=PaymentAction.choices, blank=True, null=True)
     # reference object------
@@ -47,6 +47,6 @@ class PaymentTransaction(models.Model):
     update_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.amount} Doller Payment {self.user.first_name} For {type}"
+        return f"{self.amount} Doller Payment {self.user.first_name} For {self.action} | Payment Type {self.type}"
 
 

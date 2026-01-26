@@ -1,6 +1,6 @@
 from django.shortcuts import render, get_object_or_404
 from .serializers import ServiceCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer
-from find_worker_config.utils import UpdateModelViewSet
+from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule
 from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,10 +9,14 @@ from rest_framework import status, viewsets
 from rest_framework.exceptions import ValidationError, PermissionDenied
 from find_worker_config.permissions import ForProviderProfile, IsAdminWritePermissionOnly, HasCustomerProfileSafeModeTypeHeader, ForCustomerProfile, ForAdminProfile
 from chat_notify.utils import push_notify_all, push_notify_role, push_notification
-from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, OrderRequestStatus, OrderPaymentStatus
+from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, OrderRequestStatus, OrderPaymentStatus, PaymentTransactionType, PaymentAction
 from django.db.models import Q
 from rest_framework import views
 from .services import OrderService
+from django.db import transaction
+from wallet.models import PaymentTransaction
+from django.contrib.contenttypes.models import ContentType
+from account.utils import generate_otp
 
 class ServiceCategoryViewSet(UpdateModelViewSet):
     queryset = ServiceCategory.objects.all()
@@ -145,35 +149,47 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     def order_payment(self, request, *args, **kwargs):
         try:
             order = self.get_object()
-            if order.status == OrderStatus.ACCEPT and order.payment_status == OrderPaymentStatus.UNPAID:
+            if order.payment_transactions.filter(type=PaymentTransactionType.CREDIT, action=PaymentAction.ORDER_PAYMENT).exists():
+                return Response(
+                    {"status": False, "message": "Duplicate payment detected."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if not (order.status == OrderStatus.ACCEPT and order.payment_status == OrderPaymentStatus.UNPAID):
+                return Response(
+                    {"status": False, "message": "Not allowed."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            with transaction.atomic():
                 order_request = self.get_accepted_order_request(order, kwargs.get("request_id", None))
-                
 
                 # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
                 # Here Code for Payment Process and Build Logic
+                # payment_information = payment information value json
                 # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 
-                return Response(
-                    {
-                        "status": True,
-                        "message": "Order payment complete!"
-                    }, status=status.HTTP_200_OK
+                # Payment Transaction----
+                payment = PaymentTransactionModule(
+                    user=request.user,
+                    amount=order.amount,
+                    reference_object=order,
+                    type=PaymentTransactionType.CREDIT,
+                    action=PaymentAction.ORDER_PAYMENT
                 )
-            else:
-                return Response(
-                    {
-                        "status": False,
-                        "message": "Not allowed."
-                    }
-                )
+                payment.payment_transaction()
+                
+                # Order update After payment transanction-------
+                order.status = OrderStatus.CONFIRM
+                order.payment_status = OrderPaymentStatus.PAID
+                order.save(update_fields=["status", "payment_status"])
+            return Response(
+                {"status": True, "message": "Order payment complete!"},
+                status=status.HTTP_200_OK
+            )
         except Exception as e:
             return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
+                {"status": False, "message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
             )
-
 
 
     def destroy(self, request, *args, **kwargs):
@@ -373,6 +389,11 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
         if request.method == "DELETE":
             try:
                 order = self.get_object()
+                if order.status not in [OrderStatus.ACTIVE, OrderStatus.ACCEPT]:
+                    return Response(
+                        {"status": False, "message": "Can't Cancel Request."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
                 order_request = OrderRequest.objects.get(
                     order=order,
                     provider=request.user.hasServiceProviderProfile
@@ -393,6 +414,78 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
                         "message": str(e)
                     }, status=status.HTTP_400_BAD_REQUEST
                 )
+
+    def start_work_progress(self, request, order: object):
+        if order.payment_transactions.filter(type=PaymentTransactionType.HOLD, action=PaymentAction.PAYMENT_HOLD).exists():
+            raise Exception("Duplicate payment detected.")
+        if order.status == OrderStatus.IN_PROGRESS:
+            raise Exception("The order is already in progress!")
+        if order.status != OrderStatus.CONFIRM:
+            raise Exception("Only confirm order can start work progress!")
+        with transaction.atomic():
+            # Payment Transaction----
+            payment = PaymentTransactionModule(
+                user=request.user,
+                amount=order.amount,
+                reference_object=order,
+                type=PaymentTransactionType.HOLD,
+                action=PaymentAction.PAYMENT_HOLD
+            )
+            payment.payment_transaction()
+            
+            # Order update After payment transanction-------
+            order.status = OrderStatus.IN_PROGRESS
+            order.confirmation_OTP = generate_otp(length=6)
+            order.save(update_fields=["status", "confirmation_OTP"])
+            message = "Work in Progress Start."
+            return message
+    
+    def mark_work_complete(self, request, order):
+        if order.status == OrderStatus.COMPLETED:
+            raise Exception("The order is already completed!")
+        if order.status != OrderStatus.IN_PROGRESS:
+            raise Exception("Only in progress order can complete the order!")
+        otp_code = request.data.get("otp_code", None)
+        if not otp_code:
+            raise Exception("Need to submit otp for Complete the Order.")
+        if otp_code != order.confirmation_OTP:
+            raise Exception("OTP doesn't match.")
+        order.status = OrderStatus.COMPLETED
+        order.save(update_fields=["status"])
+        message = "Work Completed"
+        return message
+
+    @action(detail=True, methods=["patch"], url_path="status-action")
+    def status_action(self, request, *args, **kwargs):
+        if request.method == "PATCH":
+            try:
+                order = self.get_object()
+                message = ""
+                order_request = OrderRequest.objects.get(
+                    order=order,
+                    provider=request.user.hasServiceProviderProfile
+                )
+                action_status = request.data.get("action_status", "").upper()
+                if action_status not in ["IN_PROGRESS", "COMPLETED", "PARTIAL_COMPLETE"]:
+                    raise Exception("Wrong Action Status.")
+                
+                if action_status == OrderStatus.IN_PROGRESS:
+                    message = self.start_work_progress(request, order)
+                if action_status == OrderStatus.COMPLETED:
+                    message = self.mark_work_complete(request, order)
+
+                return Response(
+                    {"status": True, "message": message},
+                    status=status.HTTP_200_OK
+                )
+            except Exception as e:
+                return Response(
+                    {
+                        "status": False,
+                        "message": str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST
+                )
+
 
 class AdminOrderViewSet(UpdateModelViewSet):
     queryset = Order.objects.all()

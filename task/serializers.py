@@ -47,6 +47,7 @@ class OrderRequestSerializerForOrder(serializers.ModelSerializer):
 class OrderSerializer(serializers.ModelSerializer):
     category = serializers.PrimaryKeyRelatedField(queryset=ServiceCategory.objects.all())
     order_requests = OrderRequestSerializerForOrder(many=True, read_only=True, source="order_requests.order_by")
+    service_data = serializers.DateTimeField(required=True)
     class Meta:
         model = Order
         fields = "__all__"
@@ -104,7 +105,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "title": data["title"],
             # "description": data["description"],
             # "area": data["area"],
-            "status": data["status"]
+            "status": data["status"],
+            "payment_status": data["payment_status"]
         }
         if data["status"] in (OrderStatus.ACTIVE):
             new_data["budget_min"] = data["budget_min"]
@@ -113,9 +115,9 @@ class OrderSerializer(serializers.ModelSerializer):
             new_data["provider"] = data["provider"]
             new_data["amount"] = data["amount"]
         
-        # new_data["service_data"] = data["service_data"]
-        # new_data["updated_at"] = data["updated_at"]
-        # new_data["created_at"] = data["created_at"]
+        new_data["service_data"] = data["service_data"]
+        new_data["updated_at"] = data["updated_at"]
+        new_data["created_at"] = data["created_at"]
         
         new_data["total_order_requests"] = len(data["order_requests"])
         request = self.context.get("request")
