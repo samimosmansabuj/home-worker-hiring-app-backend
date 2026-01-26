@@ -4,6 +4,9 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import exception_handler
 from rest_framework import status as drf_status
+from find_worker_config.model_choice import PaymentCurrencyType, PaymentTransactionType, ServiceChargeType
+from wallet.models import PaymentTransaction, AdminWallet
+from django.db import transaction
 
 class UpdateModelViewSet(ModelViewSet):
     delete_message = "Object Successfully Deleted!"
@@ -135,4 +138,64 @@ def log_activity(*, user, action: str, entity_type: str, entity_id=None, metadat
         metadata=metadata or {},
         ip_address=request.META.get("REMOTE_ADDR") if request else None
     )
-    # Samim Create 
+
+
+class PaymentTransactionModule:
+    def __init__(self, user, amount, payment_method_information, reference_object, type, action, reference=None, currency=None, service_charge=None):
+        self.user = user
+        self.amount = amount
+        self.payment_method_information = payment_method_information or {}
+        self.reference_object = reference_object
+        self.type = type
+        self.action = action
+        self.reference = reference
+        self.currency = currency or PaymentCurrencyType.CA
+        self.service_charge = service_charge
+    
+    def get_wallet(self):
+        return AdminWallet.objects.first()
+    
+    def get_service_charge_amount(self, amount):
+        charge_type = self.service_charge.get("type")
+        charge_number = self.service_charge.get("number")
+        if charge_type == ServiceChargeType.FLAT:
+            charge = charge_number
+        elif charge_type == ServiceChargeType.PERCENTAGE:
+            charge = amount * charge_number / 100
+        else:
+            charge = amount * 10 / 100
+        after_reduce_charge = amount-charge
+        return charge, after_reduce_charge
+    
+    def update_wallet(self, transaction):
+        wallet = self.get_wallet()
+        amount = transaction.amount
+        if self.type == PaymentTransactionType.CREDIT:
+            wallet.payment_balance += amount
+        elif self.type == PaymentTransactionType.HOLD:
+            wallet.payment_balance -= amount
+            wallet.hold_balance += amount
+        elif self.type == PaymentTransactionType.DEBIT:
+            charge_amount, amount__ = self.get_service_charge_amount(amount)
+            wallet.hold_balance -= amount
+            wallet.total_withdraw += amount__
+            wallet.current_balance += charge_amount
+        return True
+
+    def payment_transaction(self):
+        with transaction.atomic():
+            payment_transaction = PaymentTransaction.objects.create(
+                user=self.user,
+                amount=self.amount,
+                payment_method_information=self.payment_method_information or {},
+                entity_type=self.reference_object,
+                entity_id=self.reference_object.id,
+                type=self.type,
+                action=self.action,
+                reference=self.reference,
+                currency=self.currency or PaymentCurrencyType.CA
+            )
+            self.update_wallet(payment_transaction)
+            return True
+
+

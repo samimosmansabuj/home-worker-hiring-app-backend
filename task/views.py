@@ -7,9 +7,9 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import status, viewsets
 from rest_framework.exceptions import ValidationError, PermissionDenied
-from find_worker_config.permissions import ForProviderProfile, IsAdminWritePermissionOnly, HasCustomerProfileSafeModeTypeHeader, ForCustomerProfile
+from find_worker_config.permissions import ForProviderProfile, IsAdminWritePermissionOnly, HasCustomerProfileSafeModeTypeHeader, ForCustomerProfile, ForAdminProfile
 from chat_notify.utils import push_notify_all, push_notify_role, push_notification
-from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, OrderRequestStatus
+from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, OrderRequestStatus, OrderPaymentStatus
 from django.db.models import Q
 from rest_framework import views
 from .services import OrderService
@@ -95,7 +95,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             order=order
         )
         if action_status == "CANCEL":
-            if order_request.status in [OrderRequestStatus.ACCEPTED] and order.status in [OrderStatus.ACCEPT, OrderStatus.CONFIRM]:
+            if order_request.status in [OrderRequestStatus.ACCEPTED] and order.status in [OrderStatus.ACCEPT]:
                 OrderRequest.objects.filter(
                     order=order
                 ).exclude(
@@ -103,6 +103,9 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 ).update(status=OrderRequestStatus.PENDING)
                 order_request.status = OrderRequestStatus.PENDING
                 order_request.save(update_fields=["status"])
+                order.status=OrderStatus.ACTIVE
+                order.amount=0
+                order.save(update_fields=["status", "amount"])
                 return Response(
                     {
                         "status": True,
@@ -116,19 +119,128 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             order_request.status = OrderRequestStatus.REJECTED
             order_request.save(update_fields=["status"])
         elif action_status == OrderRequestStatus.ACCEPTED:
-            OrderService.accept_order(order, order_request)
+            amount = request.data.get("amount", None)
+            if not amount:
+                raise Exception("Final Amount Must be Set.")
+            OrderService.accept_order(order, order_request, float(amount))
         return Response({"status": True, "message": "Order Accepted"})
+    
+    def get_accepted_order_request(self, order, request_id=None):
+        if request_id:
+            try:
+                return get_object_or_404(
+                    order.order_requests,
+                    id=request_id,
+                    status=OrderRequestStatus.ACCEPTED
+                )
+            except:
+                return get_object_or_404(OrderRequest, order=order, status=OrderRequestStatus.ACCEPTED)
+        else:
+            return get_object_or_404(
+                order.order_requests,
+                status=OrderRequestStatus.ACCEPTED
+            )
+
+    @action(detail=True, methods=["get"], url_path=r"payment(?:/(?P<request_id>\d+))?")
+    def order_payment(self, request, *args, **kwargs):
+        try:
+            order = self.get_object()
+            if order.status == OrderStatus.ACCEPT and order.payment_status == OrderPaymentStatus.UNPAID:
+                order_request = self.get_accepted_order_request(order, kwargs.get("request_id", None))
+                
+
+                # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+                # Here Code for Payment Process and Build Logic
+                # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Order payment complete!"
+                    }, status=status.HTTP_200_OK
+                )
+            else:
+                return Response(
+                    {
+                        "status": False,
+                        "message": "Not allowed."
+                    }
+                )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            order = self.get_object()
+            if order.status != OrderStatus.ACTIVE:
+                raise PermissionDenied("Order cannot be deleted at this stage.")
+            return super().destroy(request, *args, **kwargs)
+            return Response(
+                {
+                    'status': True,
+                    'message': self.delete_message,
+                }, status=status.HTTP_200_OK
+            )
+        except PermissionDenied as e:
+            return Response(
+                {
+                    'status': False,
+                    'message': str(e),
+                }, status=status.HTTP_406_NOT_ACCEPTABLE
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'status': False,
+                    'message': str(e),
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            ) 
+
 
 class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated, ForProviderProfile]
 
     def get_queryset(self):
-        status = self.request.query_params.get("status")
-        
-        return Order.objects.filter(
-            status__in=[OrderStatus.ACTIVE]
+        provider = self.request.user.hasServiceProviderProfile
+        action = self.request.query_params.get("action")
+        qs = Order.objects.select_related(
+            "category", "customer", "provider"
+        ).prefetch_related(
+            "order_requests"
         )
+        if action == "active":
+            return qs.filter(
+                status__in=[OrderStatus.ACTIVE]
+            )
+        elif action == "requested":
+            return qs.filter(
+                order_requests__provider=provider,
+                order_requests__status=OrderRequestStatus.PENDING,
+                status=OrderStatus.ACTIVE
+            ).distinct()
+        elif action == "accept":
+            return qs.filter(
+                provider=provider,
+                status__in=[OrderStatus.ACCEPT, OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS, OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE, OrderStatus.REFUND]
+            )
+        elif action == "terminated":
+            return qs.filter(
+                order_requests__provider=provider,
+                order_requests__status=OrderRequestStatus.TERMINATE
+            ).distinct()
+        else:
+            return qs.filter(
+                Q(provider=provider) |
+                Q(order_requests__provider=provider)
+            ).distinct()
 
     def list(self, request, *args, **kwargs):
         try:
@@ -281,11 +393,11 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
                         "message": str(e)
                     }, status=status.HTTP_400_BAD_REQUEST
                 )
-        
+
 class AdminOrderViewSet(UpdateModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated, ForProviderProfile]
+    permission_classes = [IsAuthenticated, ForAdminProfile]
 
 
 

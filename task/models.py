@@ -18,7 +18,7 @@ class Order(models.Model):
     category = models.ForeignKey(ServiceCategory, on_delete=models.CASCADE)
     customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name="orders_as_customer")
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="orders_as_provider", blank=True, null=True)
-
+    
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     area = models.CharField(max_length=255)
@@ -63,10 +63,6 @@ class Order(models.Model):
                 OrderRequest.objects.filter(
                     order=self
                 ).update(status=OrderRequestStatus.PENDING)
-
-
-
-
 
 class OrderRequest(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="order_requests", blank=True, null=True)

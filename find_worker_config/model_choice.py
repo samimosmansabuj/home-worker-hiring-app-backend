@@ -29,6 +29,7 @@ class OTPType(models.TextChoices):
     LOGIN = "LOGIN"
     SIGNUP = "SIGNUP"
     VERIFY = "VERIFY"
+    RESET_PASSWORD = "RESET_PASSWORD"
 
 
 # For Task App===================================================
@@ -102,6 +103,24 @@ class WalletTransactionType(models.TextChoices):
     DEBIT = "DEBIT"
     HOLD = "HOLD"
 
+class PaymentTransactionType(models.TextChoices):
+    CREDIT = "CREDIT"
+    DEBIT = "DEBIT"
+    HOLD = "HOLD"
+
+class PaymentCurrencyType(models.TextChoices):
+    CN = "CN¥"
+    CA = "CA$"
+
+class PaymentAction(models.TextChoices):
+    ORDER_PAYMENT = "ORDER_PAYMENT"
+    PAYMENT_HOLD = "PAYMENT_HOLD"
+    SEND_PROVIDER = "SEND_PROVIDER"
+    REFUND_CUSTOMER = "REFUND_CUSTOMER"
+
+class ServiceChargeType(models.TextChoices):
+    FLAT = "FLAT"
+    PERCENTAGE = "PERCENTAGE"
 
 # For Chat & Notify App============================================
 class SendMessageType(models.TextChoices):

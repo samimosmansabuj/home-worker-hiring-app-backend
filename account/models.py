@@ -6,6 +6,7 @@ from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus,
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
+from .utils import generate_otp
 
 # Custom User Model====================================
 class User(AbstractBaseUser, PermissionsMixin):
@@ -15,6 +16,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     username = models.CharField(max_length=50, unique=True)
     email = models.EmailField(max_length=255, unique=True, blank=True,  null=True)
     phone = models.CharField(max_length=20, unique=True, blank=True,  null=True)
+    photo = models.ImageField(upload_to="user/photo/", blank=True, null=True)
     default_user = models.CharField(max_length=30, choices=UserDefault.choices, blank=True, null=True)
     
     is_phone_verified = models.BooleanField(default=False)
@@ -110,7 +112,7 @@ class OTP(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
     phone = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
-    code = models.CharField(max_length=6)
+    code = models.CharField(max_length=6, blank=True, null=True)
     purpose = models.CharField(max_length=20, choices=OTPType.choices)
 
     is_used = models.BooleanField(default=False)
@@ -119,6 +121,11 @@ class OTP(models.Model):
     def is_expired(self):
         from django.utils import timezone
         return (timezone.now() - self.created_at).seconds > 300
+    
+    def save(self, *args, **kwargs):
+        if not self.code:
+            self.code = generate_otp(length=6)
+        return super().save(*args, **kwargs)
     
     def __str__(self):
         use = "No Used" if self.is_used is False else "Used"
@@ -143,4 +150,19 @@ class ActivityLog(models.Model):
         return f"{self.created_at} - {self.user.username} - {self.action}"
 
 
+
+# Site Settings Model========================================
+class SignUpSlider(models.Model):
+    text = models.TextField(max_length=255)
+    photo = models.ImageField(upload_to="slide/signup/", blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    create_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class CustomerScreenSlide(models.Model):
+    text = models.TextField(max_length=255)
+    photo = models.ImageField(upload_to="slide/customer-screen/", blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    create_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 

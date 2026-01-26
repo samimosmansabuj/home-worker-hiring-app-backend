@@ -9,7 +9,6 @@ class ServiceCategorySerializer(serializers.ModelSerializer):
         fields = [ "id", "title", "description", "icon", "is_active", "updated_at", "created_at"]
 
 
-
 class OrderRequestSerializerForOrder(serializers.ModelSerializer):
     class Meta:
         model = OrderRequest
@@ -45,7 +44,6 @@ class OrderRequestSerializerForOrder(serializers.ModelSerializer):
         attrs["provider"] = user.hasServiceProviderProfile
         return attrs
 
-
 class OrderSerializer(serializers.ModelSerializer):
     category = serializers.PrimaryKeyRelatedField(queryset=ServiceCategory.objects.all())
     order_requests = OrderRequestSerializerForOrder(many=True, read_only=True, source="order_requests.order_by")
@@ -58,6 +56,20 @@ class OrderSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         profile_type = request.headers.get("profile-type", "").upper()
         method = request.method
+        instance = self.instance
+        if instance and request.method in ("PATCH", "PUT"):
+            if instance.status in (
+                OrderStatus.CONFIRM,
+                OrderStatus.IN_PROGRESS,
+                OrderStatus.COMPLETED,
+                OrderStatus.PARTIAL_COMPLETE,
+                OrderStatus.CANCELLED,
+                OrderStatus.REFUND,
+            ):
+                raise serializers.ValidationError(
+                    f"Order cannot be updated when status is {instance.status}"
+                )
+            
         
         if profile_type.upper() == UserDefault.PROVIDER:
             raise Exception("Provider can't Update or Create Order Details.")
@@ -78,12 +90,20 @@ class OrderSerializer(serializers.ModelSerializer):
             "description": instance.category.description,
             "icon": instance.category.icon
         }
+        customer = {
+            "id": instance.customer.id,
+            "first_name": instance.customer.user.first_name,
+            "last_name": instance.customer.user.last_name,
+            "email": instance.customer.user.email,
+            "phone": instance.customer.user.phone,
+        }
         new_data = {
             "id": data["id"],
-            "category": category,
+            # "category": category,
+            # "customer": customer,
             "title": data["title"],
-            "description": data["description"],
-            "area": data["area"],
+            # "description": data["description"],
+            # "area": data["area"],
             "status": data["status"]
         }
         if data["status"] in (OrderStatus.ACTIVE):
@@ -93,9 +113,9 @@ class OrderSerializer(serializers.ModelSerializer):
             new_data["provider"] = data["provider"]
             new_data["amount"] = data["amount"]
         
-        new_data["service_data"] = data["service_data"]
-        new_data["updated_at"] = data["updated_at"]
-        new_data["created_at"] = data["created_at"]
+        # new_data["service_data"] = data["service_data"]
+        # new_data["updated_at"] = data["updated_at"]
+        # new_data["created_at"] = data["created_at"]
         
         new_data["total_order_requests"] = len(data["order_requests"])
         request = self.context.get("request")
@@ -125,8 +145,6 @@ class OrderSerializer(serializers.ModelSerializer):
 
 
 class OrderRequestSerializer(serializers.ModelSerializer):
-    # provider = serializers.HiddenField(default=serializers.CurrentUserDefault())
-    # order = OrderSerializer()
     class Meta:
         model = OrderRequest
         fields = "__all__"

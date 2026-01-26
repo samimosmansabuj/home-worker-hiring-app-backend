@@ -112,19 +112,18 @@ class ForProviderProfile(BasePermission):
             return hasattr(user, "service_provider_profile")
         else:
             return False
+
+class ForAdminProfile(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return user.is_authenticated and user.role == UserRole.ADMIN
 # ===================New Permission End======================
 
 
-
-class IsCustomer(BasePermission):
-    def has_permission(self, request, view):
-        return hasattr(request.user, "hasCustomerProfile")
-
-class IsProvider(BasePermission):
-    def has_permission(self, request, view):
-        return hasattr(request.user, "hasServiceProviderProfile")
-
-class IsAdmin(BasePermission):
-    def has_permission(self, request, view):
-        return request.user.role == UserRole.ADMIN
+# class IsAdminCreatePermission(BasePermission):
+#     def has_permission(self, request, view):
+#         if request.method in SAFE_METHODS:
+#             return True
+#         user = request.user
+#         return user.is_authenticated and user.role == UserRole.ADMIN
 

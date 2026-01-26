@@ -4,12 +4,13 @@ from find_worker_config.model_choice import OrderStatus, OrderRequestStatus
 
 class OrderService:
     @staticmethod
-    def accept_order(order, order_request):
+    def accept_order(order, order_request, amount):
         try:
             with transaction.atomic():
                 order.provider = order_request.provider
+                order.amount = amount
                 order.status = OrderStatus.ACCEPT
-                order.save(update_fields=["status", "provider"])
+                order.save(update_fields=["status", "provider", "amount"])
 
                 OrderRequest.objects.filter(
                     order=order

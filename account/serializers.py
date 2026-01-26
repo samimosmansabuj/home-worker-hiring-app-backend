@@ -7,8 +7,11 @@ from find_worker_config.model_choice import OTPType
 from django.core.exceptions import ObjectDoesNotExist
 from find_worker_config.model_choice import UserRole, UserDefault
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from rest_framework.exceptions import ValidationError
+from django.core.mail import send_mail
 
-
+# =================================================================
 # Login With OTP Start===========================
 class LoginOTPRequestSerializer(serializers.Serializer):
     phone = serializers.CharField(required=False, allow_blank=True)
@@ -65,7 +68,9 @@ class LoginOTPVerifySerializer(serializers.Serializer):
             "refresh": str(refresh)
         }
 # Login With OTP End===========================
+# =================================================================
 
+# =================================================================
 # SignUp With OTP Start===========================
 class SignUpOTPRequestSerializer(serializers.Serializer):
     phone = serializers.CharField(required=False, allow_blank=True)
@@ -85,12 +90,8 @@ class SignUpOTPVerifySerializer(serializers.Serializer):
 
     def validate(self, attrs):
         if not attrs.get("phone") and not attrs.get("email"):
-            raise serializers.ValidationError(
+            raise Exception(
                 "Either phone or email must be provided."
-            )
-        if not attrs.get("otp"):
-            raise serializers.ValidationError(
-                "OTP must be provided."
             )
         return attrs
 
@@ -121,7 +122,7 @@ class SignupSerializer(serializers.ModelSerializer):
         if User.objects.filter(phone=value).exists():
             raise serializers.ValidationError("Phone already exists")
         return value
-
+    
     def create(self, validated_data):
         address_text = validated_data.pop("address")
         password = validated_data.pop("password")
@@ -129,25 +130,103 @@ class SignupSerializer(serializers.ModelSerializer):
         user = User(**validated_data)
         user.set_password(password)
         user.save()
-
         Address.objects.create(
             user=user,
             address_line=address_text,
             is_default=True
         )
-
+        self.user = user
         return user
     
-    def authenticated(self, user):
-        refresh = RefreshToken.for_user(user)
-        return {
-            "access": str(refresh.access_token),
-            "refresh": str(refresh)
-        }
+    def send_code(self):
+        otp = OTP.objects.create(
+            user=self.user,
+            email=self.user.email,
+            purpose=OTPType.SIGNUP
+        )
+        return otp.email
 
 # SignUp With OTP End===========================
+# =================================================================
 
+# =================================================================
+# Password Change & Reset---------------
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
 
+    def validate_email(self, value):
+        if not User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("User with this email does not exist.")
+        self.user_email = value
+        return value
+    
+    def get_user(self):
+        return User.objects.get(email=self.user_email)
+    
+    def send_code(self):
+        # send_mail(
+        #     subject="Password Reset",
+        #     message=f"Reset your password using this link:\n{reset_link}",
+        #     from_email=settings.DEFAULT_FROM_EMAIL,
+        #     recipient_list=[user.email],
+        # )
+        otp = OTP.objects.create(
+            user=self.get_user(),
+            email=self.user_email,
+            purpose=OTPType.RESET_PASSWORD
+        )
+        return otp.email if otp.email else otp.phone
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    phone = serializers.CharField(required=False)
+    email = serializers.EmailField(required=False)
+    otp = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True)
+
+    def validate_new_password(self, value):
+        validate_password(value)
+        self.password = value
+        return value
+    
+    def validate(self, attrs):
+        if not attrs.get("email") and not attrs.get("phone"):
+            raise Exception("email or phone is required")
+        return super().validate(attrs)
+    
+    def set_new_password(self, user):
+        user.set_password(self.password)
+        user.save()
+        return True
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True)
+    confirm_new_password= serializers.CharField(write_only=True)
+
+    def validate_new_password(self, value):
+        validate_password(value)
+        return value
+    
+    def validate(self, attrs):
+        if attrs.get("confirm_new_password") != attrs.get("new_password"):
+            raise Exception("New password & confirm password not same.")
+        request = self.context.get("request")
+        user = request.user
+        if not user.check_password(attrs["old_password"]):
+            raise ValidationError({"old_password": "Wrong password"})
+        self.new_set_password = attrs.get("new_password")
+        return user
+    
+    def set_password(self):
+        user = self.validated_data
+        user.set_password(self.new_set_password)
+        user.save()
+        return True
+
+# Password Change & Reset---------------
+# =================================================================
+
+# =================================================================
 # User Info Current ===========================
 class UserAddressSerializer(serializers.ModelSerializer):
     # user = serializers.PrimaryKeyRelatedField( queryset=User.objects.all(), write_only=True, required=False)
@@ -179,7 +258,6 @@ class ServiceProviderProfileSerializer(serializers.ModelSerializer):
         depth = True
 
 class UserInfoSerializer(serializers.ModelSerializer):
-    # password = serializers.CharField(write_only=True)
     addresses = UserAddressSerializer(required=False, many=True)
     service_category = ServiceCategoryField(required=True, source="service_provider_profile.service_category", write_only=True)
     customer_profile = CustomerProfileSerializer()
@@ -188,11 +266,19 @@ class UserInfoSerializer(serializers.ModelSerializer):
     default_user = serializers.CharField(read_only=True)
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "username", "email", "phone", "language", "addresses", "service_category", "customer_profile", "service_provider_profile", "profile", "default_user"]
+        fields = ["first_name", "last_name", "username", "email", "phone", "photo", "language", "addresses", "service_category", "customer_profile", "service_provider_profile", "profile", "default_user"]
     
+    def get_photo_url(self, photo, request):
+        if photo and request:
+            return request.build_absolute_uri(photo)
+        else:
+            return None
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         user_mode = self.context.get("user_mode")
+        request = self.context.get("request")
+        data["photo"] = self.get_photo_url(data.get("photo"), request)
         if user_mode == UserDefault.CUSTOMER:
             data.pop("service_provider_profile")
         elif user_mode == UserDefault.PROVIDER:
@@ -234,3 +320,5 @@ class UserInfoSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 # User Info Current ===========================
+# =================================================================
+

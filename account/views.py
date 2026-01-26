@@ -5,22 +5,23 @@ from django.http import JsonResponse
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 from rest_framework import status, permissions
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenVerifyView, TokenRefreshView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework.request import Request
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile
-from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer
+from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer
 from .utils import generate_otp
 from django.db.models import Q
 from find_worker_config.permissions import IsCustomer, IsValidFrontendRequest
 from find_worker_config.model_choice import OTPType, UserRole, UserDefault
 from .models import User, OTP
-from .utils import generate_otp
+from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet
 from django.contrib.contenttypes.models import ContentType
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from rest_framework.permissions import IsAuthenticated
 
 
@@ -222,11 +223,11 @@ class SignUpOTPVerifyView(APIView):
     def get_and_create_user(self, otp_object: OTP):
         if otp_object.phone:
             user, created = User.objects.get_or_create(
-                phone=otp_object.phone, role=UserRole.USER
+                phone=otp_object.phone, role=UserRole.USER, is_phone_verified=True
             )
         elif otp_object.email:
             user, created = User.objects.get_or_create(
-                email=otp_object.email, role=UserRole.USER
+                email=otp_object.email, role=UserRole.USER, is_email_verified=True
             )
         else:
             raise Exception("User not created, somethings wrong!")
@@ -268,10 +269,12 @@ class SignUpViews(APIView):
             serializer = SignupSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.save()
+            email = serializer.send_code()
             return Response(
                 {
                     "status": True,
-                    "data": serializer.authenticated(serializer.instance)
+                    "message": "OTP send to your email address.",
+                    "data": email
                 }, status=status.HTTP_200_OK
             )
         except ValidationError:
@@ -282,6 +285,47 @@ class SignUpViews(APIView):
                     'message': error,
                 },status=status.HTTP_400_BAD_REQUEST
             )
+        except Exception as e:
+            return Response(
+                {
+                    'status': False,
+                    'message': str(e),
+                },status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class UserSignUpOTPVerifyView(APIView):
+    def post(self, request):
+        try:
+            serializer = SignUpOTPVerifySerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            otp_obj = get_otp_object(serializer.validated_data, OTPType.SIGNUP)
+            user = otp_obj.user
+            if not user:
+                raise Exception("Not get user using this OTP.")
+            user.is_email_verified=True
+            user.save()
+            return Response(
+                {
+                    "status": True,
+                    "data": serializer.authenticated(user)
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
 
 # class SocialLoginCompleteView(APIView):
 #     # permission_classes = []
@@ -340,6 +384,163 @@ class SignUpViews(APIView):
 # SignUp With OTP End===========================
 
 
+
+# Token & Password Start=================================
+class UpdateTokenVerifyView(TokenVerifyView):
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            return Response(
+                {
+                    "status": False,
+                    "message": "Token Valid!"
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+class UpdateTokenRefreshView(TokenRefreshView):
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            return Response(
+                {
+                    "status": True,
+                    "data": serializer.validated_data
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        try:
+            serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
+            serializer.is_valid(raise_exception=True)
+            serializer.set_password()
+            return Response(
+                {
+                    "status": True,
+                    "message": "Password changed successfully"
+                },
+                status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class PasswordResetRequestView(APIView):
+    def post(self, request):
+        try:
+            serializer = PasswordResetRequestSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            send_to = serializer.send_code()
+            return Response(
+                {
+                    "status": True,
+                    "message": "OTP send for reset your password.",
+                    "send_to": send_to
+                },
+                status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class PasswordResetConfirmView(APIView):
+    def post(self, request):
+        try:
+            serializer = PasswordResetConfirmSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            otp = get_otp_object(serializer.validated_data, OTPType.RESET_PASSWORD)
+            serializer.set_new_password(otp.user)
+            return Response(
+                {
+                    "status": True,
+                    "message": "Password Reset Sucessfully.",
+                },
+                status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# Token & Password End=================================
+
+
+
 # User Info Current ===========================
 class UserInfoView(RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -371,7 +572,7 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
         return Response(
             {
                 'status': True,
-                'data': self.get_serializer(instance, context={"user_mode": user_mode}).data
+                'data': self.get_serializer(instance, context={"user_mode": user_mode, "request": request}).data
             }, status=status.HTTP_200_OK
         )
     
@@ -381,7 +582,7 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
             self.get_user_mode_profile(user_mode)
             partial = kwargs.pop('partial', False)
             instance = self.get_object()
-            serializer = UserInfoSerializer(instance, data=request.data, partial=partial, context={"user_mode": user_mode})
+            serializer = UserInfoSerializer(instance, data=request.data, partial=partial, context={"user_mode": user_mode, "request": request})
             serializer.is_valid(raise_exception=True)
             self.perform_update(serializer)
 
@@ -432,4 +633,6 @@ class UserAddressViews(UpdateModelViewSet):
         return serializer.save(profile_type=ContentType.objects.get_for_model(profile), object_id=profile.id)
 
 # User Info Current ===========================
+
+
 

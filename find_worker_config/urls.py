@@ -7,6 +7,10 @@ from dotenv import load_dotenv
 load_dotenv()
 import os
 
+admin.site.site_title = "HomeWorkerFinder"
+admin.site.site_header = "HomeWorkerFinder"
+admin.site.app_index = "Welcome to Home Worker Finder"
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path("", WelComeAPI.as_view(), name="WelcomeAPI"),
