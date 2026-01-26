@@ -84,7 +84,7 @@ class OrderRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class ReviewAndRating(models.Model):
-    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="order_reiviews")
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="order_review")
     customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, blank=True, null=True)
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, blank=True, null=True)
     rating = models.IntegerField(choices=ReviewRatingChoice.choices, default=ReviewRatingChoice.FIVE)

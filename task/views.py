@@ -41,7 +41,7 @@ class OrderRequestViewSets(UpdateModelViewSet):
 class ReviewAndRatingViewSets(UpdateModelViewSet):
     queryset = ReviewAndRating.objects.all()
     serializer_class = ReviewAndRatingSerializer
-    permission_classes = [IsAuthenticated, HasCustomerProfileSafeModeTypeHeader]
+    permission_classes = [HasCustomerProfileSafeModeTypeHeader]
     
     def get_user(self):
         profile_type = self.request.headers.get("profile-type", "")
@@ -149,16 +149,21 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     def order_payment(self, request, *args, **kwargs):
         try:
             order = self.get_object()
+
+            # Error Handling, Permission and Acceptance For Payment
             if order.payment_transactions.filter(type=PaymentTransactionType.CREDIT, action=PaymentAction.ORDER_PAYMENT).exists():
                 return Response(
                     {"status": False, "message": "Duplicate payment detected."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+            if order.status == OrderStatus.CONFIRM and order.payment_status == OrderPaymentStatus.PAID:
+                raise Exception("The order is already confirm!")
             if not (order.status == OrderStatus.ACCEPT and order.payment_status == OrderPaymentStatus.UNPAID):
                 return Response(
-                    {"status": False, "message": "Not allowed."},
+                    {"status": False, "message": "Only accept and Unpaid order can payment to confirm!"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+            
             with transaction.atomic():
                 order_request = self.get_accepted_order_request(order, kwargs.get("request_id", None))
 
@@ -191,6 +196,42 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    @action(detail=True, methods=["get", "post"], url_path=r"review")
+    def order_review(self, request, *args, **kwargs):
+        order = self.get_object()
+        user = request.user
+        if request.method == "GET":
+            review = ReviewAndRating.objects.get(order=order, customer=user.hasCustomerProfile)
+            serializer = ReviewAndRatingSerializer(review, context={"request": request, "present": "in_order"})
+            return Response(
+                {"status": True, "data": serializer.data},
+                status=status.HTTP_200_OK
+            ) 
+        if request.method == "POST":
+            if order.status not in (OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE):
+                raise Exception("Only Complete Work can review.")
+            elif ReviewAndRating.objects.filter(order=order).exists():
+                raise Exception("Review already submited.")
+            try:
+                with transaction.atomic():
+                    serializer = ReviewAndRatingSerializer(data=request.data, context={"request": request, "order": order, "present": "in_order"})
+                    serializer.is_valid(raise_exception=True)
+                    serializer.save()
+                    return Response(
+                        {"status": True, "message": "Thanks for your reviews.", "data": serializer.data},
+                        status=status.HTTP_200_OK
+                    )
+            except ValidationError:
+                error = {key: str(value[0]) for key, value in serializer.errors.items()}
+                return Response(
+                    {"status": False, "message": error},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception as e:
+                return Response(
+                    {"status": False, "message": str(e)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
     def destroy(self, request, *args, **kwargs):
         try:
@@ -303,20 +344,21 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
     def send_request(self, request, *args, **kwargs):
         if request.method == "POST":
             try:
-                order = self.get_object()
-                serializer = OrderRequestSerializer(
-                    data=request.data,
-                    context={"request": request, "order": order}
-                )
-                serializer.is_valid(raise_exception=True)
-                serializer.save(
-                    order=order,
-                    provider=request.user.hasServiceProviderProfile
-                )
-                return Response(
-                    {"status": True, "data": serializer.data},
-                    status=status.HTTP_201_CREATED
-                )
+                with transaction.atomic():
+                    order = self.get_object()
+                    serializer = OrderRequestSerializer(
+                        data=request.data,
+                        context={"request": request, "order": order}
+                    )
+                    serializer.is_valid(raise_exception=True)
+                    serializer.save(
+                        order=order,
+                        provider=request.user.hasServiceProviderProfile
+                    )
+                    return Response(
+                        {"status": True, "data": serializer.data},
+                        status=status.HTTP_201_CREATED
+                    )
             except ValidationError:
                 error = {key: str(value[0]) for key, value in serializer.errors.items()}
                 return Response(
@@ -361,24 +403,24 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
                     raise Exception("Order Request Already Accepted.")
                 if order.status != OrderStatus.ACTIVE:
                     raise Exception(f"Can't Update Your Request Right Now.")
-                
-                update_fields = []
-                if request.data.get("budget"):
-                    order_request.budget = request.data.get("budget")
-                    update_fields.append("budget")
-                if request.data.get("message"):
-                    order_request.message = request.data.get("message")
-                    update_fields.append("message")
-                if update_fields:
-                    order_request.save(update_fields=update_fields)
-                request_serializer = OrderRequestSerializer(order_request)
-                return Response(
-                    {
-                        "status": True,
-                        "message": "Request Update Succefully!",
-                        "data": request_serializer.data
-                    }, status=status.HTTP_200_OK
-                )
+                with transaction.atomic():
+                    update_fields = []
+                    if request.data.get("budget"):
+                        order_request.budget = request.data.get("budget")
+                        update_fields.append("budget")
+                    if request.data.get("message"):
+                        order_request.message = request.data.get("message")
+                        update_fields.append("message")
+                    if update_fields:
+                        order_request.save(update_fields=update_fields)
+                    request_serializer = OrderRequestSerializer(order_request)
+                    return Response(
+                        {
+                            "status": True,
+                            "message": "Request Update Succefully!",
+                            "data": request_serializer.data
+                        }, status=status.HTTP_200_OK
+                    )
             except Exception as e:
                 return Response(
                     {
@@ -416,12 +458,14 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
                 )
 
     def start_work_progress(self, request, order: object):
+        # Error Handling, Permission and Acceptance For Start Work Progress
         if order.payment_transactions.filter(type=PaymentTransactionType.HOLD, action=PaymentAction.PAYMENT_HOLD).exists():
             raise Exception("Duplicate payment detected.")
         if order.status == OrderStatus.IN_PROGRESS:
             raise Exception("The order is already in progress!")
         if order.status != OrderStatus.CONFIRM:
             raise Exception("Only confirm order can start work progress!")
+        
         with transaction.atomic():
             # Payment Transaction----
             payment = PaymentTransactionModule(
@@ -441,6 +485,7 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
             return message
     
     def mark_work_complete(self, request, order):
+        # Error Handling, Permission and Acceptance For Mark Complete
         if order.status == OrderStatus.COMPLETED:
             raise Exception("The order is already completed!")
         if order.status != OrderStatus.IN_PROGRESS:
@@ -450,34 +495,36 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
             raise Exception("Need to submit otp for Complete the Order.")
         if otp_code != order.confirmation_OTP:
             raise Exception("OTP doesn't match.")
-        order.status = OrderStatus.COMPLETED
-        order.save(update_fields=["status"])
-        message = "Work Completed"
-        return message
+        with transaction.atomic():
+            order.status = OrderStatus.COMPLETED
+            order.save(update_fields=["status"])
+            message = "Work Completed"
+            return message
 
     @action(detail=True, methods=["patch"], url_path="status-action")
     def status_action(self, request, *args, **kwargs):
         if request.method == "PATCH":
             try:
-                order = self.get_object()
-                message = ""
-                order_request = OrderRequest.objects.get(
-                    order=order,
-                    provider=request.user.hasServiceProviderProfile
-                )
-                action_status = request.data.get("action_status", "").upper()
-                if action_status not in ["IN_PROGRESS", "COMPLETED", "PARTIAL_COMPLETE"]:
-                    raise Exception("Wrong Action Status.")
-                
-                if action_status == OrderStatus.IN_PROGRESS:
-                    message = self.start_work_progress(request, order)
-                if action_status == OrderStatus.COMPLETED:
-                    message = self.mark_work_complete(request, order)
+                with transaction.atomic():
+                    order = self.get_object()
+                    message = ""
+                    order_request = OrderRequest.objects.get(
+                        order=order,
+                        provider=request.user.hasServiceProviderProfile
+                    )
+                    action_status = request.data.get("action_status", "").upper()
+                    if action_status not in ["IN_PROGRESS", "COMPLETED", "PARTIAL_COMPLETE"]:
+                        raise Exception("Wrong Action Status.")
+                    
+                    if action_status == OrderStatus.IN_PROGRESS:
+                        message = self.start_work_progress(request, order)
+                    if action_status == OrderStatus.COMPLETED:
+                        message = self.mark_work_complete(request, order)
 
-                return Response(
-                    {"status": True, "message": message},
-                    status=status.HTTP_200_OK
-                )
+                    return Response(
+                        {"status": True, "message": message},
+                        status=status.HTTP_200_OK
+                    )
             except Exception as e:
                 return Response(
                     {

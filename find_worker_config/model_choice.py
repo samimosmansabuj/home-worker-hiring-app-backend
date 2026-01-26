@@ -74,7 +74,6 @@ class OrderPaymentStatus(models.TextChoices):
     UNPAID = "UNPAID"
     PAID = "PAID"
     DISBURSEMENT = "DISBURSEMENT"
-    # PAID_TO_PROVIDER = "PAID_TO_PROVIDER"
     CANCELLED = "CANCELLED"
     REFUND = "REFUND"
 

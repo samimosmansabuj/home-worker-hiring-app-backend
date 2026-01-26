@@ -1,6 +1,6 @@
 from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating
 from rest_framework import serializers
-from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault
+from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, ReviewRatingChoice
 from account.models import User
 
 class ServiceCategorySerializer(serializers.ModelSerializer):
@@ -44,6 +44,27 @@ class OrderRequestSerializerForOrder(serializers.ModelSerializer):
         attrs["provider"] = user.hasServiceProviderProfile
         return attrs
 
+class ReviewAndRatingSerializerForOrder(serializers.ModelSerializer):
+    class Meta:
+        model = ReviewAndRating
+        fields = "__all__"
+        read_only_fields = ["customer", "provider"]
+
+    def validate(self, attrs):
+        order = attrs.get("order")
+        if order.status not in (OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE):
+            raise Exception("This order isn't Complete!")
+        request = self.context.get("request")
+        user = request.user
+        if order.customer != user.customer:
+            raise Exception("You can't create review for this order!")
+        provider = order.provider
+        if not provider:
+            raise Exception("Provider has been empty!")
+        attrs["customer"] = user.customer
+        attrs["provider"] = provider
+        return attrs
+
 class OrderSerializer(serializers.ModelSerializer):
     category = serializers.PrimaryKeyRelatedField(queryset=ServiceCategory.objects.all())
     order_requests = OrderRequestSerializerForOrder(many=True, read_only=True, source="order_requests.order_by")
@@ -51,7 +72,7 @@ class OrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = "__all__"
-        read_only_fields = ("customer",)
+        read_only_fields = ("customer", "order_review")
     
     def validate(self, attrs):
         request = self.context.get("request")
@@ -95,16 +116,17 @@ class OrderSerializer(serializers.ModelSerializer):
             "id": instance.customer.id,
             "first_name": instance.customer.user.first_name,
             "last_name": instance.customer.user.last_name,
+            "photo": instance.customer.user.photo.url if instance.customer.user.photo else None,
             "email": instance.customer.user.email,
             "phone": instance.customer.user.phone,
         }
         new_data = {
             "id": data["id"],
-            # "category": category,
-            # "customer": customer,
+            "category": category,
+            "customer": customer,
             "title": data["title"],
-            # "description": data["description"],
-            # "area": data["area"],
+            "description": data["description"],
+            "area": data["area"],
             "status": data["status"],
             "payment_status": data["payment_status"]
         }
@@ -120,6 +142,8 @@ class OrderSerializer(serializers.ModelSerializer):
         new_data["created_at"] = data["created_at"]
         
         new_data["total_order_requests"] = len(data["order_requests"])
+
+        # representation oder request
         request = self.context.get("request")
         if request:
             user = request.user
@@ -134,6 +158,16 @@ class OrderSerializer(serializers.ModelSerializer):
                 new_data["order_requests"] = data["order_requests"]
             elif user.role == UserRole.ADMIN:
                 new_data["order_requests"] = data["order_requests"]
+        
+        if instance.status in [OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE]:
+            review ={
+                "id": instance.order_review.id,
+                "rating": instance.order_review.rating,
+                "review": instance.order_review.review,
+                "created": instance.order_review.created,
+            }
+            new_data["order_review"] = review
+
         return new_data
     
     def create(self, validated_data):
@@ -144,6 +178,7 @@ class OrderSerializer(serializers.ModelSerializer):
             raise Exception("Customer profile required.")
         validated_data["customer"] = profile
         return super().create(validated_data)
+
 
 
 class OrderRequestSerializer(serializers.ModelSerializer):
@@ -174,24 +209,68 @@ class OrderRequestSerializer(serializers.ModelSerializer):
         attrs["provider"] = user.hasServiceProviderProfile
         return attrs
 
-
 class ReviewAndRatingSerializer(serializers.ModelSerializer):
+    rating = serializers.ChoiceField(choices=ReviewRatingChoice.choices, required=True)
     class Meta:
         model = ReviewAndRating
         fields = "__all__"
-        read_only_fields = ["customer", "provider"]
+        read_only_fields = ["customer", "provider", "order"]
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        new_data = {
+            "id": data.get("id"),
+            "rating": data.get("rating"),
+            "review": data.get("review"),
+            "created": data.get("created"),
+        }
+
+        customer_object = instance.customer
+        provider_object = instance.provider
+        order_object = instance.order
+        request = self.context.get("request")
+        present = self.context.get("present", None)
+
+        if present is None:
+            def build_user_profile(id, user):
+                return {
+                    "id": id,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "photo": request.build_absolute_uri(user.photo.url) if user.photo else None,
+                    "email": user.email,
+                    "phone": user.phone,
+                }
+            customer = build_user_profile(customer_object.id, customer_object.user)
+            provider = build_user_profile(provider_object.id, provider_object.user)
+            order = {
+                "id": order_object.id,
+                "title": order_object.title,
+                "status": order_object.status,
+            }
+
+            new_data["order"] = order
+            new_data["customer"] = customer
+            new_data["provider"] = provider
+        return new_data
 
     def validate(self, attrs):
-        order = attrs.get("order")
+        order = self.context.get("order")
+
+        # Customer Check & Permission---------
+        request = self.context.get("request")
+        if order.customer != request.user.hasCustomerProfile:
+            raise Exception("You can't create review for this order!")
+        
+        # Provider Check
+        if not order.provider:
+            raise Exception("Provider has been empty!")
+
+        # Order Status Check & Error Handling
         if order.status not in (OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE):
             raise Exception("This order isn't Complete!")
-        request = self.context.get("request")
-        user = request.user
-        if order.customer != user.customer:
-            raise Exception("You can't create review for this order!")
-        provider = order.provider
-        if not provider:
-            raise Exception("Provider has been empty!")
-        attrs["customer"] = user.customer
-        attrs["provider"] = provider
+        
+        attrs["order"] = order
+        attrs["customer"] = request.user.hasCustomerProfile
+        attrs["provider"] = order.provider
         return attrs

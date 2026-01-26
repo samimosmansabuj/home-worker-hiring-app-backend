@@ -86,7 +86,6 @@ class HasCustomerProfileSafeModeTypeHeader(BasePermission):
         else:
             return False
 
-
 class ForCustomerProfile(BasePermission):
     def has_permission(self, request, view):
         profile_type = request.headers.get("profile-type", "").lower()
