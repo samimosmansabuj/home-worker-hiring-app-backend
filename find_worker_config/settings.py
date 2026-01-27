@@ -33,7 +33,7 @@ INSTALLED_APPS = [
     
 
     # custom app
-    'account', 'chat_notify', 'task', 'wallet',
+    'account', 'chat_notify', 'task',
     
 ]
 
@@ -85,10 +85,6 @@ else:
 
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': DEFAULT_RENDERER_CLASSES_,
-    
-    # 'DEFAULT_PERMISSION_CLASSES': [
-    #     'rest_framework.permissions.DjangoModelPermissionsOrAnonReadOnly'
-    # ],
     
     'EXCEPTION_HANDLER': 'find_worker_config.utils.custom_exception_handler',
     

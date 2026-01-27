@@ -1,9 +1,10 @@
 from django.db import models
 from account.models import User, CustomerProfile, ServiceProviderProfile
-from find_worker_config.model_choice import ServiceTaskStatus, ServicePrototypeStatus, JobRequestStatus, OrderStatus, OrderRequestStatus, ReviewRatingChoice, OrderPaymentStatus
+from find_worker_config.model_choice import ServiceTaskStatus, ServicePrototypeStatus, JobRequestStatus, OrderStatus, OrderRequestStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction
 from django.db import transaction
-from django.contrib.contenttypes.fields import GenericRelation
-from wallet.models import PaymentTransaction
+from django.contrib.contenttypes.fields import GenericRelation, GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
+# from wallet.models import PaymentTransaction
 
 class ServiceCategory(models.Model):
     title = models.CharField(max_length=255)
@@ -36,7 +37,7 @@ class Order(models.Model):
     confirmation_OTP = models.CharField(max_length=6, blank=True, null=True)
 
     payment_transactions = GenericRelation(
-        PaymentTransaction,
+        "task.PaymentTransaction",
         content_type_field="entity_type",
         object_id_field="entity_id",
         related_query_name="order"
@@ -90,4 +91,38 @@ class ReviewAndRating(models.Model):
     rating = models.IntegerField(choices=ReviewRatingChoice.choices, default=ReviewRatingChoice.FIVE)
     review = models.CharField(max_length=255, blank=True, null=True)
     created = models.DateTimeField(auto_now=True)
+
+
+
+
+class AdminWallet(models.Model):
+    current_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    payment_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    hold_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_withdraw = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    update_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Current Balance: {self.current_balance} | Hold Balance: {self.hold_balance} | Total Withdraw: {self.total_withdraw}"
+
+class PaymentTransaction(models.Model):
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True)
+    amount = models.DecimalField(max_digits=9, decimal_places=2)
+    currency = models.CharField(max_length=20, choices=PaymentCurrencyType.choices, default=PaymentCurrencyType.CA)
+    type = models.CharField(max_length=20, choices=PaymentTransactionType.choices)
+    payment_information = models.JSONField(blank=True, null=True)
+    reference = models.CharField(max_length=255, blank=True, null=True)
+    action = models.CharField(max_length=50, choices=PaymentAction.choices, blank=True, null=True)
+    # reference object------
+    entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
+    entity_id = models.PositiveBigIntegerField()
+    service = GenericForeignKey('entity_type', 'entity_id')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    update_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.amount} Doller Payment {self.user.first_name} For {self.action} | Payment Type {self.type}"
 

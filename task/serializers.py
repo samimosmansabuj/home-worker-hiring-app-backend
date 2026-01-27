@@ -106,6 +106,7 @@ class OrderSerializer(serializers.ModelSerializer):
     
     def to_representation(self, instance):
         data = super().to_representation(instance)
+        request = self.context.get("request")
         category = {
             "id": instance.category.id,
             "title": instance.category.title,
@@ -116,7 +117,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "id": instance.customer.id,
             "first_name": instance.customer.user.first_name,
             "last_name": instance.customer.user.last_name,
-            "photo": instance.customer.user.photo.url if instance.customer.user.photo else None,
+            "photo": request.build_absolute_uri(instance.customer.user.photo.url) if instance.customer.user.photo else None,
             "email": instance.customer.user.email,
             "phone": instance.customer.user.phone,
         }

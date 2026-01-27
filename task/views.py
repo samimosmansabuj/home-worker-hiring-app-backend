@@ -1,7 +1,7 @@
 from django.shortcuts import render, get_object_or_404
 from .serializers import ServiceCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer
 from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule
-from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating
+from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -14,7 +14,6 @@ from django.db.models import Q
 from rest_framework import views
 from .services import OrderService
 from django.db import transaction
-from wallet.models import PaymentTransaction
 from django.contrib.contenttypes.models import ContentType
 from account.utils import generate_otp
 
@@ -48,7 +47,7 @@ class ReviewAndRatingViewSets(UpdateModelViewSet):
         return self.request.user
 
 
-
+# For Customer----------------------------------------------------------
 class CustomerOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [ForCustomerProfile]
@@ -98,6 +97,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             id=self.kwargs.get("request_id"),
             order=order
         )
+        
         if action_status == "CANCEL":
             if order_request.status in [OrderRequestStatus.ACCEPTED] and order.status in [OrderStatus.ACCEPT]:
                 OrderRequest.objects.filter(
@@ -119,6 +119,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             else:
                 raise Exception("You can't Cancel This Request.")
         self.order_action_permission(order, order_request, action_status)
+        
         if action_status == OrderRequestStatus.REJECTED:
             order_request.status = OrderRequestStatus.REJECTED
             order_request.save(update_fields=["status"])
@@ -261,6 +262,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             ) 
 
 
+# For Provider----------------------------------------------------------
 class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated, ForProviderProfile]
@@ -460,7 +462,7 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
     def start_work_progress(self, request, order: object):
         # Error Handling, Permission and Acceptance For Start Work Progress
         if order.payment_transactions.filter(type=PaymentTransactionType.HOLD, action=PaymentAction.PAYMENT_HOLD).exists():
-            raise Exception("Duplicate payment detected.")
+            raise Exception("Duplicate payment hold detected.")
         if order.status == OrderStatus.IN_PROGRESS:
             raise Exception("The order is already in progress!")
         if order.status != OrderStatus.CONFIRM:
@@ -534,10 +536,89 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
                 )
 
 
+# For Admin----------------------------------------------------------
 class AdminOrderViewSet(UpdateModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated, ForAdminProfile]
+    permission_classes = [ForAdminProfile]
+
+    def payable_amount(self, amount):
+        charge = (amount * 10) / 100
+        return amount - charge
+    
+    def get_accepted_order_request(self, order):
+        return get_object_or_404(
+            order.order_requests,
+            status=OrderRequestStatus.ACCEPTED
+        )
+
+    def error_and_permission_handle(self, order, payable_amount):
+        if payable_amount is None:
+            raise Exception("'payable_amount' must be set.")
+        if order.payment_transactions.filter(type=PaymentTransactionType.DEBIT, action=PaymentAction.SEND_PROVIDER).exists():
+            raise Exception("Duplicate payment disbursement detected.")
+        if order.status not in (OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE):
+            raise Exception("Only Complete Order can disbursement")
+        elif order.payment_status != OrderPaymentStatus.PAID:
+            raise Exception("Only Paid order can disbursement")
+        elif order.payment_status == OrderPaymentStatus.DISBURSEMENT:
+            raise Exception("Already payment disbursement to worker.")
+        if float(payable_amount) != float(self.payable_amount(order.amount)):
+            raise Exception("Payable Amount mismatch!")
+        return True
+
+    @action(detail=True, methods=["post", "get"], url_path="pay-to-worker")
+    def pay_to_worker(self, request, *args, **kwargs):
+        order = self.get_object()
+        if request.method == "GET":
+            try:
+                return Response(
+                    {
+                        "status": True,
+                        "data": {
+                            "payable_amount": float(order.amount - (order.amount * 10 / 100))
+                        }
+                    }, status=status.HTTP_200_OK
+                )
+            except Exception as e:
+                return Response({"status": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        elif request.method == "POST":
+            try:
+                order_request = self.get_accepted_order_request(order)
+                if not order_request:
+                    raise Exception("Accept order request not found for this order.")
+                
+                payable_amount = request.data.get("payable_amount", None)
+                self.error_and_permission_handle(order, payable_amount)
+
+                with transaction.atomic():
+                    # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+                    # Here Code for Payment Process and Build Logic
+                    # payment_information = payment information value json
+                    # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+                    # Payment Transaction----
+                    payment = PaymentTransactionModule(
+                        user=order.provider.user,
+                        amount=order.amount,
+                        reference_object=order,
+                        type=PaymentTransactionType.DEBIT,
+                        action=PaymentAction.SEND_PROVIDER
+                    )
+                    payment.payment_transaction()
+                    
+                    # Order update After payment transanction-------
+                    order.payment_status = OrderPaymentStatus.DISBURSEMENT
+                    order.save(update_fields=["payment_status"])
+                    return Response(
+                        {"status": True, "message": "Pay to Worker Successfully Complete!"},
+                        status=status.HTTP_200_OK
+                    )
+            except Exception as e:
+                return Response(
+                    {"status": False, "message": str(e)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
 
 

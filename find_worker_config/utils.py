@@ -5,7 +5,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import exception_handler
 from rest_framework import status as drf_status
 from find_worker_config.model_choice import PaymentCurrencyType, PaymentTransactionType, ServiceChargeType
-from wallet.models import PaymentTransaction, AdminWallet
+from task.models import PaymentTransaction, AdminWallet
 from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
 
@@ -142,7 +142,7 @@ def log_activity(*, user, action: str, entity_type: str, entity_id=None, metadat
 
 
 class PaymentTransactionModule:
-    def __init__(self, user, amount, reference_object, type, action, payment_information={}, reference=None, currency=None, service_charge=None):
+    def __init__(self, user, amount, reference_object, type, action, payment_information: dict={}, reference=None, currency=None, service_charge: dict={}):
         self.user = user
         self.amount = amount
         self.payment_information = payment_information
@@ -163,11 +163,11 @@ class PaymentTransactionModule:
         if charge_type == ServiceChargeType.FLAT:
             charge = charge_number
         elif charge_type == ServiceChargeType.PERCENTAGE:
-            charge = amount * charge_number / 100
+            charge = (amount * charge_number) / 100
         else:
-            charge = amount * 10 / 100
-        after_reduce_charge = amount-charge
-        return charge, after_reduce_charge
+            charge = (amount * 10) / 100
+        payable_amount = amount-charge
+        return charge, payable_amount
     
     def update_wallet(self, transaction):
         wallet = self.get_wallet()
@@ -178,9 +178,11 @@ class PaymentTransactionModule:
             wallet.payment_balance -= amount
             wallet.hold_balance += amount
         elif self.type == PaymentTransactionType.DEBIT:
-            charge_amount, amount__ = self.get_service_charge_amount(amount)
+            charge_amount, payable_amount = self.get_service_charge_amount(amount)
+            transaction.amount = payable_amount
+            transaction.save(update_fields=["amount"])
             wallet.hold_balance -= amount
-            wallet.total_withdraw += amount__
+            wallet.total_withdraw += payable_amount
             wallet.current_balance += charge_amount
         wallet.save(update_fields=[
             "payment_balance",

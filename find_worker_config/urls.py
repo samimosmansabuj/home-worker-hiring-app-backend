@@ -19,7 +19,6 @@ urlpatterns = [
     path("api/v1/", include("account.urls")),
     path("api/v1/", include("chat_notify.urls")),
     path("api/v1/", include("task.urls")),
-    path("api/v1/", include("wallet.urls")),
 ]
 
 SERVE_MEDIA = os.getenv("SERVE_MEDIA", "False").strip().lower() in ("true","1","yes")
