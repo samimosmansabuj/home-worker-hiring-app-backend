@@ -2,6 +2,7 @@ from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating
 from rest_framework import serializers
 from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, ReviewRatingChoice
 from account.models import User
+from django.shortcuts import get_object_or_404
 
 class ServiceCategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -69,10 +70,12 @@ class OrderSerializer(serializers.ModelSerializer):
     category = serializers.PrimaryKeyRelatedField(queryset=ServiceCategory.objects.all())
     order_requests = OrderRequestSerializerForOrder(many=True, read_only=True, source="order_requests.order_by")
     service_data = serializers.DateTimeField(required=True)
+    # order_review = ReviewAndRatingSerializerForOrder(read_only=True)
+    order_review = serializers.PrimaryKeyRelatedField(read_only=True)
     class Meta:
         model = Order
         fields = "__all__"
-        read_only_fields = ("customer", "order_review")
+        read_only_fields = ("customer", "provider", "order_review")
     
     def validate(self, attrs):
         request = self.context.get("request")
@@ -103,49 +106,56 @@ class OrderSerializer(serializers.ModelSerializer):
             if attrs.get("budget_min") > attrs.get("budget_max"):
                 raise Exception("Minimum budget cannot exceed maximum budget!")
         return attrs
-    
+
     def to_representation(self, instance):
-        data = super().to_representation(instance)
         request = self.context.get("request")
+        def build_user_profile(id, user):
+            return {
+                "id": id,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "photo": request.build_absolute_uri(user.photo.url) if user.photo else None,
+                "email": user.email,
+                "phone": user.phone,
+            }
         category = {
             "id": instance.category.id,
             "title": instance.category.title,
             "description": instance.category.description,
             "icon": instance.category.icon
         }
-        customer = {
-            "id": instance.customer.id,
-            "first_name": instance.customer.user.first_name,
-            "last_name": instance.customer.user.last_name,
-            "photo": request.build_absolute_uri(instance.customer.user.photo.url) if instance.customer.user.photo else None,
-            "email": instance.customer.user.email,
-            "phone": instance.customer.user.phone,
-        }
+        customer = build_user_profile(instance.customer.id, instance.customer.user)
+        provider = build_user_profile(instance.provider.id, instance.provider.user) if instance.provider else None
+
+        # custom data representation
+        data = super().to_representation(instance)
         new_data = {
             "id": data["id"],
             "category": category,
             "customer": customer,
+            "provider": provider,
             "title": data["title"],
             "description": data["description"],
             "area": data["area"],
             "status": data["status"],
             "payment_status": data["payment_status"]
         }
+        
+        # show amount according to status 
         if data["status"] in (OrderStatus.ACTIVE):
             new_data["budget_min"] = data["budget_min"]
             new_data["budget_max"] = data["budget_max"]
         else:
-            new_data["provider"] = data["provider"]
+            # new_data["provider"] = data["provider"]
             new_data["amount"] = data["amount"]
         
+        # meta data 
         new_data["service_data"] = data["service_data"]
         new_data["updated_at"] = data["updated_at"]
         new_data["created_at"] = data["created_at"]
         
-        new_data["total_order_requests"] = len(data["order_requests"])
-
         # representation oder request
-        request = self.context.get("request")
+        new_data["total_order_requests"] = len(data["order_requests"])
         if request:
             user = request.user
             if user.role == UserRole.USER and instance.order_requests.filter(provider=user.hasServiceProviderProfile).exists():
@@ -160,14 +170,19 @@ class OrderSerializer(serializers.ModelSerializer):
             elif user.role == UserRole.ADMIN:
                 new_data["order_requests"] = data["order_requests"]
         
+        # representation order review
+        order_review = get_object_or_404(ReviewAndRating, pk=data.get("order_review")) if data.get("order_review") else None
         if instance.status in [OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE]:
-            review ={
-                "id": instance.order_review.id,
-                "rating": instance.order_review.rating,
-                "review": instance.order_review.review,
-                "created": instance.order_review.created,
-            }
-            new_data["order_review"] = review
+            if order_review:
+                review ={
+                    "id": order_review.id,
+                    "rating": order_review.rating,
+                    "review": order_review.review,
+                    "created": order_review.created,
+                }
+                new_data["order_review"] = review
+            else:
+                new_data["order_review"] = order_review
 
         return new_data
     

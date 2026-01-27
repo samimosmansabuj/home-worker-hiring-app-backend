@@ -11,7 +11,7 @@ from rest_framework.request import Request
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile
-from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer
+from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer
 from .utils import generate_otp
 from django.db.models import Q
 from find_worker_config.permissions import IsCustomer, IsValidFrontendRequest
@@ -23,6 +23,8 @@ from django.contrib.contenttypes.models import ContentType
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from rest_framework.permissions import IsAuthenticated
+from find_worker_config.utils import LogActivityModule
+from django.db import transaction
 
 
 class WelComeAPI(APIView):
@@ -36,10 +38,25 @@ class WelComeAPI(APIView):
         )
 
 class PasswordLoginViews(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
+    def create_log(self, user, action, entity, metadata={}):
+        # user, action, entity, metadata, request
+        data = {
+            "user": user,
+            "action": action,
+            "entity": entity,
+            "request": self.request,
+            "metadata": {"login_method": "password"}
+        }
+        log = LogActivityModule(data)
+        log.create()
+
     def post(self, request: Request, *args, **kwargs):
         try:
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
+            user = serializer.get_user()
+            self.create_log(user, "New Login", user)
             return Response(
                 {
                     "status": True,
@@ -64,7 +81,6 @@ class PasswordLoginViews(TokenObtainPairView):
 
 # Login With OTP Start===========================
 class LoginOTPRequestView(APIView):
-
     def post(self, request):
         try:
             serializer = LoginOTPRequestSerializer(data=request.data)
@@ -115,19 +131,30 @@ class LoginOTPVerifyView(APIView):
         otp_object.save(update_fields=["is_used"])
         return otp_object
 
+    def create_log(self, user, action, entity, metadata={}):
+        data = {
+            "user": user,
+            "action": action,
+            "entity": entity,
+            "request": self.request,
+            "metadata": {"login_method": "OTP Login"}
+        }
+        log = LogActivityModule(data)
+        log.create()
+    
     def post(self, request):
         try:
-            serializer = LoginOTPVerifySerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            otp = self.get_otp_object(serializer.validated_data)
-            # refresh = RefreshToken.for_user(user)
-
-            return Response(
-                {
-                    "status": True,
-                    "data": serializer.authenticated(otp.user)
-                }, status=status.HTTP_200_OK
-            )
+            with transaction.atomic():
+                serializer = LoginOTPVerifySerializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                otp = self.get_otp_object(serializer.validated_data)
+                self.create_log(otp.user, "New Login", otp.user)
+                return Response(
+                    {
+                        "status": True,
+                        "data": serializer.authenticated(otp.user)
+                    }, status=status.HTTP_200_OK
+                )
         except ValidationError:
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
             return Response(
@@ -262,7 +289,7 @@ class SignUpOTPVerifyView(APIView):
                     "message": str(e)
                 }, status=status.HTTP_400_BAD_REQUEST
             )
-
+# -------------------------------------------------
 class SignUpViews(APIView):
     def post(self, request, *args, **kwargs):
         try:
@@ -294,16 +321,29 @@ class SignUpViews(APIView):
             )
 
 class UserSignUpOTPVerifyView(APIView):
+    def create_log(self, user, action, entity, metadata={}):
+        data = {
+            "user": user,
+            "action": action,
+            "entity": entity,
+            "request": self.request,
+            "metadata": {"login_method": "User Registration & Verify"}
+        }
+        log = LogActivityModule(data)
+        log.create()
+    
     def post(self, request):
         try:
-            serializer = SignUpOTPVerifySerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            otp_obj = get_otp_object(serializer.validated_data, OTPType.SIGNUP)
-            user = otp_obj.user
-            if not user:
-                raise Exception("Not get user using this OTP.")
-            user.is_email_verified=True
-            user.save()
+            with transaction.atomic():
+                serializer = SignUpOTPVerifySerializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                otp_obj = get_otp_object(serializer.validated_data, OTPType.SIGNUP)
+                user = otp_obj.user
+                if not user:
+                    raise Exception("Not get user using this OTP.")
+                user.is_email_verified=True
+                user.save()
+                self.create_log(user, "New Registration & Verify", user)
             return Response(
                 {
                     "status": True,
@@ -443,18 +483,32 @@ class UpdateTokenRefreshView(TokenRefreshView):
 
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
+    def create_log(self):
+        data = {
+            "user": self.request.user,
+            "action": "Password Change",
+            "entity": self.request.user,
+            "request": self.request,
+            "metadata": {},
+            "for_notify": True
+        }
+        log = LogActivityModule(data)
+        log.create()
+    
     def post(self, request):
         try:
-            serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
-            serializer.is_valid(raise_exception=True)
-            serializer.set_password()
-            return Response(
-                {
-                    "status": True,
-                    "message": "Password changed successfully"
-                },
-                status=status.HTTP_200_OK
-            )
+            with transaction.atomic():
+                serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
+                serializer.is_valid(raise_exception=True)
+                serializer.set_password()
+                self.create_log()
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Password changed successfully"
+                    },
+                    status=status.HTTP_200_OK
+                )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             return Response(
@@ -546,6 +600,17 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = UserInfoSerializer
 
+    def create_log(self):
+        data = {
+            "user": self.request.user,
+            "action": "Profile Update",
+            "entity": self.request.user,
+            "request": self.request,
+            "metadata": {}
+        }
+        log = LogActivityModule(data)
+        log.create()
+
     def get_object(self):
         user = self.request.user
         return user
@@ -579,17 +644,24 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
     def update(self, request, *args, **kwargs):
         user_mode = request.query_params.get("user_mode")
         try:
-            self.get_user_mode_profile(user_mode)
-            partial = kwargs.pop('partial', False)
-            instance = self.get_object()
-            serializer = UserInfoSerializer(instance, data=request.data, partial=partial, context={"user_mode": user_mode, "request": request})
-            serializer.is_valid(raise_exception=True)
-            self.perform_update(serializer)
+            with transaction.atomic():
+                self.get_user_mode_profile(user_mode)
+                partial = kwargs.pop('partial', False)
+                instance = self.get_object()
+                serializer = UserInfoSerializer(instance, data=request.data, partial=partial, context={"user_mode": user_mode, "request": request})
+                serializer.is_valid(raise_exception=True)
+                self.perform_update(serializer)
 
-            if getattr(instance, '_prefetched_objects_cache', None):
-                instance._prefetched_objects_cache = {}
-
-            return Response(serializer.data)
+                if getattr(instance, '_prefetched_objects_cache', None):
+                    instance._prefetched_objects_cache = {}
+                
+                self.create_log()
+                return Response(
+                    {
+                        "status": True,
+                        "data": serializer.data
+                    }
+                )
         except ValidationError as e:
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
             
@@ -627,10 +699,23 @@ class UserAddressViews(UpdateModelViewSet):
             return Address.objects.all()
         raise Exception("Wrong user!")
 
+    def create_log(self, entity, action):
+        data = {
+            "user": self.request.user,
+            "action": action,
+            "entity": entity,
+            "request": self.request,
+            "metadata": {}
+        }
+        log = LogActivityModule(data)
+        log.create()
+
     def perform_create(self, serializer):
         user_mode = self.request.query_params.get("user_mode")
         profile = self.get_user_mode_profile(user_mode)
-        return serializer.save(profile_type=ContentType.objects.get_for_model(profile), object_id=profile.id)
+        address_serializer = serializer.save(profile_type=ContentType.objects.get_for_model(profile), object_id=profile.id)
+        self.create_log(address_serializer, "Add new address")
+        return address_serializer
 
 # User Info Current ===========================
 

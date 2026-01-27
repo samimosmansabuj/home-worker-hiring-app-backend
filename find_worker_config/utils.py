@@ -2,12 +2,12 @@
 from rest_framework import status, exceptions
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.views import exception_handler
-from rest_framework import status as drf_status
 from find_worker_config.model_choice import PaymentCurrencyType, PaymentTransactionType, ServiceChargeType
 from task.models import PaymentTransaction, AdminWallet
 from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
+from account.models import ActivityLog
+from chat_notify.models import Notification
 
 class UpdateModelViewSet(ModelViewSet):
     delete_message = "Object Successfully Deleted!"
@@ -108,38 +108,81 @@ class UpdateModelViewSet(ModelViewSet):
             }, status=status.HTTP_200_OK
         )
 
-def custom_exception_handler(exc, context):
-    response = exception_handler(exc, context)
-    if response is not None:
-        message = ""
-        if isinstance(response.data, dict):
-            message = response.data.get("detail") or next(iter(response.data.values()), [""])[0]
-        else:
-            message = str(response.data)
+# class NotificationModule:
+#     def get_confirm_field(self, field, field_name):
+#         if not field:
+#             raise Exception(f"{field_name} is missing.")
+#         return field
+    
+#     def __init__(self, data: dict):
+#         self.received = self.get_confirm_field(data.get("received"), "Received User")
+#         self.action = self.get_confirm_field(data.get("action"), "Action")
+#         self.type = self.get_confirm_field(data.get("type"), "Type")
+#         self.entity = self.get_confirm_field(data.get("entity"), "Entity")
+#         self.metadata = data.get("metadata", {})
+    
+#     def get_entity_type(self):
+#         if not hasattr(self.entity, "_meta"):
+#             raise Exception("Entity must be a Django model instance.")
+#         return ContentType.objects.get_for_model(self.entity)
 
-        custom_response = {
-            "status": False,
-            "message": message
-        }
-        response.data = custom_response
-    else:
-        return Response(
-            {"status": False, "message": str(exc)},
-            status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-    return response
+#     def create(self):
+#         try:
+#             with transaction.atomic():
+#                 notification = Notification.objects.create(
+#                     received=self.user,
+#                     action=self.action,
+#                     type=self.type,
+#                     entity_type=self.get_entity_type(),
+#                     entity_id=self.entity.id,
+#                     metadata=self.metadata,
+#                 )
+#                 return notification
+#         except Exception as e:
+#             # print("error: ", e)
+#             raise Exception("Someting wrong for create Notification!")
 
-def log_activity(*, user, action: str, entity_type: str, entity_id=None, metadata=None, request=None):
-    from account.models import ActivityLog
-    ActivityLog.objects.create(
-        user=user,
-        action=action,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        metadata=metadata or {},
-        ip_address=request.META.get("REMOTE_ADDR") if request else None
-    )
+class LogActivityModule:
+    def get_confirm_data(self, field, field_name):
+        if not field:
+            raise Exception(f"{field_name} is missing.")
+        return field
+    
+    def __init__(self, data: dict):
+        self.user = self.get_confirm_data(data.get("user"), "User")
+        self.action = self.get_confirm_data(data.get("action"), "Action")
+        self.entity = self.get_confirm_data(data.get("entity"), "Entity")
+        self.request = self.get_confirm_data(data.get("request"), "Request")
+        self.metadata = data.get("metadata", {})
+        self.need_notify = data.get("for_notify", False)
+    
+    def get_entity_type(self):
+        if not hasattr(self.entity, "_meta"):
+            raise Exception("Entity must be a Django model instance.")
+        return ContentType.objects.get_for_model(self.entity)
 
+    def get_ip(self, request):
+        xff = request.META.get("HTTP_X_FORWARDED_FOR")
+        if xff:
+            return xff.split(",")[0]
+        return request.META.get("REMOTE_ADDR")
+
+    def create(self):
+        try:
+            with transaction.atomic():
+                log = ActivityLog.objects.create(
+                    user=self.user,
+                    action=self.action,
+                    entity_type=self.get_entity_type(),
+                    entity_id=self.entity.id,
+                    metadata=self.metadata,
+                    ip_address=self.get_ip(self.request),
+                    need_notify=self.need_notify
+                )
+                return log
+        except Exception as e:
+            print("error: ", e)
+            raise Exception("Someting wrong for create log!")
 
 class PaymentTransactionModule:
     def __init__(self, user, amount, reference_object, type, action, payment_information: dict={}, reference=None, currency=None, service_charge: dict={}):

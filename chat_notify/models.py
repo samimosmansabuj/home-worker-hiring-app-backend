@@ -48,14 +48,22 @@ class Attachment(models.Model):
 
 class Notification(models.Model):
     received = models.ForeignKey(User, on_delete=models.CASCADE)
-    title = models.CharField(max_length=255)
-    type = models.CharField(max_length=50, blank=True, null=True, choices=NotifyType.choices)
-    data = models.JSONField(default=dict, blank=True, null=True)
+    action = models.CharField(max_length=255)
+    metadata = models.JSONField(default=dict, blank=True, null=True)
     is_read = models.BooleanField(default=False)
 
-    content_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
-    object_id = models.PositiveIntegerField(blank=True, null=True)
-    service = GenericForeignKey('content_type', 'object_id')
+    entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
+    entity_id = models.PositiveIntegerField(blank=True, null=True)
+    service = GenericForeignKey('entity_type', 'entity_id')
 
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def notify_text(self):
+        return f"{self.received.first_name} {self.received.last_name if self.received.last_name else ''} {self.action} at {self.created_at}"
+
+    def __str__(self):
+        return f"{self.received.first_name} {self.received.last_name if self.received.last_name else ''} {self.action} at {self.created_at}"
+    
+
 

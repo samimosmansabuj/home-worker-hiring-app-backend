@@ -144,6 +144,7 @@ class ActivityLog(models.Model):
     metadata = models.JSONField(default=dict)
     ip_address = models.GenericIPAddressField()
     created_at = models.DateTimeField(auto_now_add=True)
+    need_notify = models.BooleanField(default=False)
 
     def __str__(self):
         # return f"{self.user.username} {self.action} "

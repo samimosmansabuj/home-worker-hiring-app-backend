@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User, OTP, Address, CustomerProfile, ServiceProviderProfile
@@ -13,6 +14,10 @@ from django.core.mail import send_mail
 
 # =================================================================
 # Login With OTP Start===========================
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def get_user(self):
+        return self.user
+
 class LoginOTPRequestSerializer(serializers.Serializer):
     phone = serializers.CharField(required=False, allow_blank=True)
     email = serializers.EmailField(required=False, allow_blank=True)

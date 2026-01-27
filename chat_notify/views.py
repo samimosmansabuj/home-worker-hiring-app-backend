@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404, redirect
 from account.models import User
 from .models import ChatMessage, ChatRoom, Attachment, Notification
 from find_worker_config.utils import UpdateModelViewSet
+from rest_framework.viewsets import ReadOnlyModelViewSet
 
 
 class ChatRoomViewsets(UpdateModelViewSet):
@@ -109,14 +110,28 @@ class NotificationViewsets(UpdateModelViewSet):
     queryset = Notification.objects.all()
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
+    delete_message = "Notification Deleted."
 
     def get_queryset(self):
-        return Notification.objects.filter(user=self.request.user)
+        return Notification.objects.filter(received=self.request.user)
     
     def perform_retrieve(self, serializer):
         serializer.instance.is_read = True
         serializer.instance.save(update_fields={"is_read": True})
         return super().perform_retrieve(serializer)
-
-# update_fields=[...]
     
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {
+                "status": False,
+                "message": "Notification direct create not allow."
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {
+                "status": False,
+                "message": "Notification direct create not allow."
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
