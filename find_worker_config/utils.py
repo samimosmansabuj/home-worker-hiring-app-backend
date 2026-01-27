@@ -1,7 +1,7 @@
 
 from rest_framework import status, exceptions
 from rest_framework.response import Response
-from rest_framework.viewsets import ModelViewSet
+from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from find_worker_config.model_choice import PaymentCurrencyType, PaymentTransactionType, ServiceChargeType
 from task.models import PaymentTransaction, AdminWallet
 from django.db import transaction
@@ -107,6 +107,38 @@ class UpdateModelViewSet(ModelViewSet):
                 'message': self.delete_message,
             }, status=status.HTTP_200_OK
         )
+
+class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return self.perform_retrieve(serializer)
+    
+    def perform_retrieve(self, serializer):
+        return Response(
+            {
+                'status': True,
+                'data': serializer.data
+            }, status=status.HTTP_200_OK
+        )
+    
+    def list(self, request, *args, **kwargs):
+        try:
+            response = super().list(request, *args, **kwargs)
+            return Response(
+                {
+                    'status': True,
+                    'count': len(response.data),
+                    'data': response.data
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'status': False,
+                    'messgae': str(e),
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 # class NotificationModule:
 #     def get_confirm_field(self, field, field_name):
@@ -253,4 +285,10 @@ class PaymentTransactionModule:
             return True
         raise Exception("Payment Transaction not update.")
 
+# query = Q(code=otp, is_used=False, purpose=OTPType.LOGIN)
+# if phone:
+#     query &= Q(phone=phone)
+# if email:
+#     query &= Q(email=email)
+# otp_object = OTP.objects.filter(query).last()
 

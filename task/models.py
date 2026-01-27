@@ -94,7 +94,8 @@ class ReviewAndRating(models.Model):
 
 
 
-
+# ==========================================================================================
+# ============= Payment transaction & Wallet Section Start=============================
 class AdminWallet(models.Model):
     current_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     payment_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -125,4 +126,7 @@ class PaymentTransaction(models.Model):
 
     def __str__(self):
         return f"{self.amount} Doller Payment {self.user.first_name} For {self.action} | Payment Type {self.type}"
+
+# ============= Payment transaction & Wallet Section End=============================
+# ==========================================================================================
 

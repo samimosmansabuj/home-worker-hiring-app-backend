@@ -1,4 +1,4 @@
-from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating
+from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction
 from rest_framework import serializers
 from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, ReviewRatingChoice
 from account.models import User
@@ -258,7 +258,7 @@ class ReviewAndRatingSerializer(serializers.ModelSerializer):
                     "phone": user.phone,
                 }
             customer = build_user_profile(customer_object.id, customer_object.user)
-            provider = build_user_profile(provider_object.id, provider_object.user)
+            # provider = build_user_profile(provider_object.id, provider_object.user)
             order = {
                 "id": order_object.id,
                 "title": order_object.title,
@@ -267,7 +267,7 @@ class ReviewAndRatingSerializer(serializers.ModelSerializer):
 
             new_data["order"] = order
             new_data["customer"] = customer
-            new_data["provider"] = provider
+            # new_data["provider"] = provider
         return new_data
 
     def validate(self, attrs):
@@ -290,3 +290,24 @@ class ReviewAndRatingSerializer(serializers.ModelSerializer):
         attrs["customer"] = request.user.hasCustomerProfile
         attrs["provider"] = order.provider
         return attrs
+
+
+
+
+
+
+
+
+
+
+
+
+# ==========================================================================================
+# =================== Payment transaction Section Start===================================
+class PaymentTransactionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentTransaction
+        fields = "__all__"
+
+# =================== Payment transaction Section End===================================
+# ==========================================================================================

@@ -1,6 +1,6 @@
 from django.shortcuts import render, get_object_or_404
-from .serializers import ServiceCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer
-from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule
+from .serializers import ServiceCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer, PaymentTransactionSerializer
+from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet
 from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -16,6 +16,8 @@ from .services import OrderService
 from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
 from account.utils import generate_otp
+from account.models import ServiceProviderProfile
+from django.db.models import Q
 
 class ServiceCategoryViewSet(UpdateModelViewSet):
     queryset = ServiceCategory.objects.all()
@@ -41,13 +43,34 @@ class ReviewAndRatingViewSets(UpdateModelViewSet):
     queryset = ReviewAndRating.objects.all()
     serializer_class = ReviewAndRatingSerializer
     permission_classes = [HasCustomerProfileSafeModeTypeHeader]
-    
+
+    def get_queryset(self):
+        profile_type = self.request.headers.get("profile-type", "").upper()
+        action = self.request.query_params.get("action")
+        provider_profile_id = self.request.query_params.get("provider_profile_id")
+
+        if action == "view" and profile_type == UserDefault.CUSTOMER:
+            if not provider_profile_id:
+                raise Exception("Profile id is missing.")
+            provider = get_object_or_404(ServiceProviderProfile, pk=int(provider_profile_id))
+            return ReviewAndRating.objects.filter(provider=provider)
+        else:
+            if profile_type == UserRole.ADMIN:
+                if not provider_profile_id:
+                    raise Exception("Profile id is missing.")
+                # provider = get_object_or_404(ServiceProviderProfile, pk=int(provider_profile_id))
+                return ReviewAndRating.objects.filter(provider__id=int(provider_profile_id))
+            elif profile_type == UserDefault.CUSTOMER:
+                return ReviewAndRating.objects.filter(customer=self.request.user.hasCustomerProfile)
+            elif profile_type == UserDefault.PROVIDER:
+                return ReviewAndRating.objects.filter(provider=self.request.user.hasServiceProviderProfile)
+
     def get_user(self):
         profile_type = self.request.headers.get("profile-type", "")
         return self.request.user
 
 
-# For Customer----------------------------------------------------------
+# Order Section For Customer----------------------------------------------------------
 class CustomerOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [ForCustomerProfile]
@@ -262,7 +285,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             ) 
 
 
-# For Provider----------------------------------------------------------
+# Order Section For Provider----------------------------------------------------------
 class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated, ForProviderProfile]
@@ -536,7 +559,7 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
                 )
 
 
-# For Admin----------------------------------------------------------
+# Order Section For Admin----------------------------------------------------------
 class AdminOrderViewSet(UpdateModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
@@ -622,10 +645,28 @@ class AdminOrderViewSet(UpdateModelViewSet):
 
 
 
+# ==========================================================================================
+# =================== Payment transaction Section Start===================================
+class PaymentTransactionViewSets(UpdateReadOnlyModelViewSet):
+    queryset = PaymentTransaction.objects.all()
+    serializer_class = PaymentTransactionSerializer
+    permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        if self.request.user.role == UserRole.USER:
+            pt = PaymentTransaction.objects.filter(
+                user=self.request.user
+            ).filter(
+                Q(type=PaymentTransactionType.CREDIT) | Q(type=PaymentTransactionType.DEBIT)
+            )
+        elif self.request.user.role == UserRole.ADMIN:
+            pt = PaymentTransaction.objects.all()
+        else:
+            raise Exception("Payment transaction not get for the user.")
+        return pt
 
-
-
+# =================== Payment transaction Section Start===================================
+# ==========================================================================================
 
 
     

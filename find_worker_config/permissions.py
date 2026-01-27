@@ -71,7 +71,8 @@ class HasCustomerProfileSafeModeTypeHeader(BasePermission):
     def has_permission(self, request, view):
         profile_type = request.headers.get("profile-type", "").lower()
         if not profile_type:
-            return False
+            raise Exception("Profile Type must be set in headers.")
+            # return False
         user = request.user
         if not user.is_authenticated:
             return False
@@ -83,6 +84,8 @@ class HasCustomerProfileSafeModeTypeHeader(BasePermission):
             return hasattr(user, "customer_profile")
         elif profile_type == "provider":
             return hasattr(user, "service_provider_profile")
+        elif profile_type == "admin":
+            return user.role == UserRole.ADMIN
         else:
             return False
 
