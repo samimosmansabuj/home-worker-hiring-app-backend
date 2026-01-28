@@ -1,7 +1,6 @@
 from django.db.models.signals import post_save
-from django.contrib.auth.models import User
 from django.dispatch import receiver
-from .models import ActivityLog
+from .models import ActivityLog, ServiceProviderProfile, ProviderVerification
 from chat_notify.models import Notification
 from chat_notify.utils import push_notification
 
@@ -25,3 +24,13 @@ def create_log_notification(sender, instance, created, **kwargs):
             }
         )
         return notification
+
+
+@receiver(post_save, sender=ServiceProviderProfile)
+def create_provider_verification_object(sender, instance, created, **kwargs):
+    if created or not hasattr(instance, "verification"):
+        ProviderVerification.objects.create(
+            provider=instance
+        )
+        return True
+

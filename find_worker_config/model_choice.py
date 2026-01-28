@@ -16,7 +16,6 @@ class UserLanguage(models.TextChoices):
 
 class UserStatus(models.TextChoices):
     ACTIVE = "ACTIVE"
-    PENDING = "PENDING"
     DEACTIVE = "DEACTIVE"
     REJECTED = "REJECTED"
 
@@ -30,6 +29,11 @@ class OTPType(models.TextChoices):
     SIGNUP = "SIGNUP"
     VERIFY = "VERIFY"
     RESET_PASSWORD = "RESET_PASSWORD"
+
+class DocumentType(models.TextChoices):
+    PASSPORT = "PASSPORT"
+    NID = "NID"
+    DRIVING_LICENSE = "DRIVING_LICENSE"
 
 
 # For Task App===================================================

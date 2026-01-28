@@ -11,12 +11,12 @@ from rest_framework.request import Request
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile
-from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer
+from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer, ProviderVerificationSerializer
 from .utils import generate_otp
 from django.db.models import Q
 from find_worker_config.permissions import IsCustomer, IsValidFrontendRequest
 from find_worker_config.model_choice import OTPType, UserRole, UserDefault
-from .models import User, OTP
+from .models import User, OTP, ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet
 from django.contrib.contenttypes.models import ContentType
@@ -716,6 +716,44 @@ class UserAddressViews(UpdateModelViewSet):
         address_serializer = serializer.save(profile_type=ContentType.objects.get_for_model(profile), object_id=profile.id)
         self.create_log(address_serializer, "Add new address")
         return address_serializer
+
+class ProviderVerificationViews(APIView):
+    serializer_class = ProviderVerificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        try:
+            if request.user.role == UserRole.USER:
+                serializer = self.serializer_class(request.user.service_provider_profile.verification, context={"request": request})
+            elif request.user.role == UserRole.ADMIN:
+                serializer = self.serializer_class(ProviderVerification.objects.all(), many=True, context={"request": request})
+            else:
+                raise Exception("Wrong user.")
+            
+            return Response(
+                {
+                    "status": True,
+                    "data": serializer.data
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }
+            )
+    
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        return Response(
+            {
+                "status": True,
+                # "data": serializer.data
+            }, status=status.HTTP_200_OK
+        )
 
 # User Info Current ===========================
 

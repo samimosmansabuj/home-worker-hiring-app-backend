@@ -2,7 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, OTPType, UserDefault
+from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, OTPType, UserDefault, DocumentType
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -21,7 +21,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     is_phone_verified = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
-    status = models.CharField(max_length=30, choices=UserStatus.choices, default=UserStatus.PENDING)
+    status = models.CharField(max_length=30, choices=UserStatus.choices, default=UserStatus.ACTIVE)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
 
@@ -79,6 +79,7 @@ class ServiceProviderProfile(models.Model):
     rating = models.FloatField(default=0)
     total_jobs = models.PositiveIntegerField(default=0)
     service_category = models.ManyToManyField("task.ServiceCategory", blank=True, null=True)
+    is_verified = models.BooleanField(default=False)
     
     def __str__(self):
         return f"{self.user.username} - Provider Profile"
@@ -132,6 +133,18 @@ class OTP(models.Model):
         expired = "No Expired" if self.is_expired() is False else "Expired"
         return f"Your {self.purpose} OTP is {self.code} | {use} & {expired}"
 
+class ProviderVerification(models.Model):
+    provider = models.OneToOneField(ServiceProviderProfile, on_delete=models.CASCADE, related_name="verification")
+    document_type = models.CharField(max_length=20, choices=DocumentType.choices, blank=True, null=True)
+    document = models.ImageField(upload_to="user/verification/", blank=True, null=True)
+    is_verified = models.BooleanField(default=False)
+    update_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.provider.user.first_name} {self.provider.user.last_name} Provider Profile is Verified: {self.is_verified}"
+
+
+
 
 # Logs Model==============================================
 class ActivityLog(models.Model):
@@ -148,8 +161,6 @@ class ActivityLog(models.Model):
     def __str__(self):
         # return f"{self.user.username} {self.action} "
         return f"{self.created_at} - {self.user.username} - {self.action}"
-
-
 
 # Site Settings Model========================================
 class SignUpSlider(models.Model):

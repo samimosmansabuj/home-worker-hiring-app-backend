@@ -2,7 +2,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User, OTP, Address, CustomerProfile, ServiceProviderProfile
+from .models import User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification
 from .utils import generate_otp
 from find_worker_config.model_choice import OTPType
 from django.core.exceptions import ObjectDoesNotExist
@@ -324,6 +324,29 @@ class UserInfoSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         instance.save()
         return instance
+
+class ProviderVerificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProviderVerification
+        fields = "__all__"
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        if request.user.role == UserRole.USER:
+            data.pop("provider", None)
+        elif request.user.role == UserRole.ADMIN:
+            def build_user_profile(id, user):
+                return {
+                    "id": id,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "photo": request.build_absolute_uri(user.photo.url) if user.photo else None,
+                    "email": user.email,
+                    "phone": user.phone,
+                }
+            data["provider"] = build_user_profile(instance.provider.id, instance.provider.user)
+        return data
 # User Info Current ===========================
 # =================================================================
 

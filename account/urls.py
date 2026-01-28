@@ -1,5 +1,5 @@
 from django.urls import path, include
-from .views import PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView
+from .views import PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews
 from rest_framework.routers import DefaultRouter
 from .site_views import SignUpSliderViewset, CustomerScreenSlideViewset, AdminWalletViews
 
@@ -37,6 +37,7 @@ urlpatterns = [
     
     path("current-user/", UserInfoView.as_view(), name="current_user_info"),
     path("user/", include(router.urls)),
+    path("provider-verification/", ProviderVerificationViews.as_view(), name="provider-verification"),
 
 
 
