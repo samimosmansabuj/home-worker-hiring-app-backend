@@ -4,7 +4,8 @@ from find_worker_config.model_choice import ServiceTaskStatus, ServicePrototypeS
 from django.db import transaction
 from django.contrib.contenttypes.fields import GenericRelation, GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
-# from wallet.models import PaymentTransaction
+import secrets
+import string
 
 class ServiceCategory(models.Model):
     title = models.CharField(max_length=255)
@@ -108,8 +109,13 @@ class AdminWallet(models.Model):
     def __str__(self):
         return f"Payment Balance: {self.payment_balance} | Current Balance: {self.current_balance} | Hold Balance: {self.hold_balance} | Total Withdraw: {self.total_withdraw}"
 
+
+
+
 class PaymentTransaction(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True)
+    payment_id = models.CharField(max_length=50, blank=True, null=True, unique=True, editable=False)
+    transaction_id = models.CharField(max_length=50, blank=True, null=True, unique=True, editable=False)
     amount = models.DecimalField(max_digits=9, decimal_places=2)
     currency = models.CharField(max_length=20, choices=PaymentCurrencyType.choices, default=PaymentCurrencyType.CA)
     type = models.CharField(max_length=20, choices=PaymentTransactionType.choices)
@@ -124,8 +130,24 @@ class PaymentTransaction(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     update_at = models.DateTimeField(auto_now=True)
 
+    def generate_payment_id(self):
+        chars = string.ascii_uppercase + string.digits
+        while True:
+            code = ''.join(secrets.choice(chars) for _ in range(6))
+            generate_id = f"PAY-{code}"
+            if not PaymentTransaction.objects.filter(payment_id=generate_id).exists():
+                return generate_id
+            
+
+    def save(self, *args, **kwargs):
+        if not self.payment_id:
+            self.payment_id = self.generate_payment_id()
+        return super().save(*args, **kwargs)
+
+    # def __str__(self):
+    #     return f"{self.amount} Doller Payment {self.user.first_name} For {self.action} | Payment Type {self.type}"
     def __str__(self):
-        return f"{self.amount} Doller Payment {self.user.first_name} For {self.action} | Payment Type {self.type}"
+        return f"{self.payment_id} | {self.amount} | {self.action}"
 
 # ============= Payment transaction & Wallet Section End=============================
 # ==========================================================================================

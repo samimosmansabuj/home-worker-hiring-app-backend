@@ -1,6 +1,6 @@
 from django.shortcuts import render, get_object_or_404
 from .serializers import ServiceCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer, PaymentTransactionSerializer
-from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet
+from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet, LogActivityModule
 from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -80,6 +80,28 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             customer=self.request.user.hasCustomerProfile
         ).prefetch_related("order_requests")
 
+    def create_log(self, action, entity=None, for_notify=False, user=None, metadata={}):
+        data = {
+            "user": user or self.request.user,
+            "action": action,
+            "entity": entity,
+            "request": self.request,
+            "for_notify": for_notify,
+            "metadata": metadata,
+        }
+        log = LogActivityModule(data)
+        log.create()
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self.create_log("Create New Order", instance, for_notify=True)
+        return instance
+    
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self.create_log("Update Order", instance, for_notify=False)
+        return instance
+
     @action(detail=True, methods=["get"], url_path=r"requests(?:/(?P<request_id>\d+))?")
     def requests(self, request, *args, **kwargs):
         order = self.get_object()
@@ -123,35 +145,50 @@ class CustomerOrderViewSet(UpdateModelViewSet):
         
         if action_status == "CANCEL":
             if order_request.status in [OrderRequestStatus.ACCEPTED] and order.status in [OrderStatus.ACCEPT]:
-                OrderRequest.objects.filter(
-                    order=order
-                ).exclude(
-                    provider=order_request.provider
-                ).update(status=OrderRequestStatus.PENDING)
-                order_request.status = OrderRequestStatus.PENDING
-                order_request.save(update_fields=["status"])
-                order.status=OrderStatus.ACTIVE
-                order.amount=0
-                order.save(update_fields=["status", "amount"])
-                return Response(
-                    {
-                        "status": True,
-                        "message": "Accepted Request Cancel."
-                    }
-                )
+                with transaction.atomic():
+                    OrderRequest.objects.filter(
+                        order=order
+                    ).update(status=OrderRequestStatus.PENDING)
+                    order.provider = None
+                    order.status=OrderStatus.ACTIVE
+                    order.amount=0
+                    order.save(update_fields=["status", "amount", "provider"])
+                    self.create_log(
+                        "Request Cancel", entity=order, for_notify=True, user=order_request.provider.user,
+                        metadata={"reference_user_id": self.request.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+                    )
+                    return Response(
+                        {
+                            "status": True,
+                            "message": "Accepted Request Cancel."
+                        }
+                    )
             else:
                 raise Exception("You can't Cancel This Request.")
         self.order_action_permission(order, order_request, action_status)
         
         if action_status == OrderRequestStatus.REJECTED:
-            order_request.status = OrderRequestStatus.REJECTED
-            order_request.save(update_fields=["status"])
+            with transaction.atomic():
+                if order_request.status == OrderRequestStatus.REJECTED:
+                    raise Exception("This order request already rejected.")
+                order_request.status = OrderRequestStatus.REJECTED
+                order_request.save(update_fields=["status"])
+                self.create_log(
+                    "Request Rejected", entity=order, for_notify=True, user=order_request.provider.user,
+                    metadata={"reference_user_id": self.request.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+                )
+                return Response({"status": True, "message": "Order Request Rejected"}, status=status.HTTP_200_OK)
         elif action_status == OrderRequestStatus.ACCEPTED:
-            amount = request.data.get("amount", None)
-            if not amount:
-                raise Exception("Final Amount Must be Set.")
-            OrderService.accept_order(order, order_request, float(amount))
-        return Response({"status": True, "message": "Order Accepted"})
+            with transaction.atomic():
+                amount = request.data.get("amount", None)
+                if not amount:
+                    raise Exception("Final Amount Must be Set.")
+                OrderService.accept_order(order, order_request, float(amount))
+                self.create_log(
+                    "Request Accept", entity=order, for_notify=True, user=order_request.provider.user,
+                    metadata={"reference_user_id": self.request.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+                )
+                return Response({"status": True, "message": "Order Request Accepted"}, status=status.HTTP_200_OK)
     
     def get_accepted_order_request(self, order, request_id=None):
         if request_id:
@@ -210,10 +247,18 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 order.status = OrderStatus.CONFIRM
                 order.payment_status = OrderPaymentStatus.PAID
                 order.save(update_fields=["status", "payment_status"])
-            return Response(
-                {"status": True, "message": "Order payment complete!"},
-                status=status.HTTP_200_OK
-            )
+                self.create_log(
+                    "Order Payment Complete", entity=order, for_notify=True, user=order.customer.user,
+                    metadata={"reference_user_id": order.provider.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+                )
+                self.create_log(
+                    "Order Confirm", entity=order, for_notify=True, user=order.provider.user,
+                    metadata={"reference_user_id": order.customer.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+                )
+                return Response(
+                    {"status": True, "message": "Order payment complete!"},
+                    status=status.HTTP_200_OK
+                )
         except Exception as e:
             return Response(
                 {"status": False, "message": str(e)},
@@ -223,6 +268,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     @action(detail=True, methods=["get", "post"], url_path=r"review")
     def order_review(self, request, *args, **kwargs):
         order = self.get_object()
+        order_request = self.get_accepted_order_request(order=order)
         user = request.user
         if request.method == "GET":
             review = ReviewAndRating.objects.get(order=order, customer=user.hasCustomerProfile)
@@ -241,6 +287,10 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                     serializer = ReviewAndRatingSerializer(data=request.data, context={"request": request, "order": order, "present": "in_order"})
                     serializer.is_valid(raise_exception=True)
                     serializer.save()
+                    self.create_log(
+                        "Submit Feedback", entity=order, for_notify=True, user=order.provider.user,
+                        metadata={"reference_user_id": order.customer.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+                    )
                     return Response(
                         {"status": True, "message": "Thanks for your reviews.", "data": serializer.data},
                         status=status.HTTP_200_OK
@@ -262,6 +312,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             order = self.get_object()
             if order.status != OrderStatus.ACTIVE:
                 raise PermissionDenied("Order cannot be deleted at this stage.")
+            self.create_log("Delete Order")
             return super().destroy(request, *args, **kwargs)
             return Response(
                 {
@@ -289,6 +340,18 @@ class CustomerOrderViewSet(UpdateModelViewSet):
 class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated, ForProviderProfile]
+
+    def create_log(self, action, entity=None, for_notify=False, user=None, metadata={}):
+        data = {
+            "user": user or self.request.user,
+            "action": action,
+            "entity": entity,
+            "request": self.request,
+            "for_notify": for_notify,
+            "metadata": metadata,
+        }
+        log = LogActivityModule(data)
+        log.create()
 
     def get_queryset(self):
         provider = self.request.user.hasServiceProviderProfile
@@ -380,6 +443,7 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
                         order=order,
                         provider=request.user.hasServiceProviderProfile
                     )
+                    self.create_log("Send Request For Order", serializer.instance)
                     return Response(
                         {"status": True, "data": serializer.data},
                         status=status.HTTP_201_CREATED
@@ -543,8 +607,16 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
                     
                     if action_status == OrderStatus.IN_PROGRESS:
                         message = self.start_work_progress(request, order)
+                        self.create_log(
+                            "Order Work Start", entity=order, for_notify=True, user=order.customer.user,
+                            metadata={"reference_user_id": order.provider.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+                        )
                     if action_status == OrderStatus.COMPLETED:
                         message = self.mark_work_complete(request, order)
+                        self.create_log(
+                            "Order Complete", entity=order, for_notify=True, user=order.customer.user,
+                            metadata={"reference_user_id": order.provider.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+                        )
 
                     return Response(
                         {"status": True, "message": message},
@@ -564,6 +636,18 @@ class AdminOrderViewSet(UpdateModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
     permission_classes = [ForAdminProfile]
+
+    def create_log(self, action, entity=None, for_notify=False, user=None, metadata={}):
+        data = {
+            "user": user or self.request.user,
+            "action": action,
+            "entity": entity,
+            "request": self.request,
+            "for_notify": for_notify,
+            "metadata": metadata,
+        }
+        log = LogActivityModule(data)
+        log.create()
 
     def payable_amount(self, amount):
         charge = (amount * 10) / 100
@@ -633,6 +717,10 @@ class AdminOrderViewSet(UpdateModelViewSet):
                     # Order update After payment transanction-------
                     order.payment_status = OrderPaymentStatus.DISBURSEMENT
                     order.save(update_fields=["payment_status"])
+                    self.create_log(
+                        "Your Payment Complete", entity=order, for_notify=True, user=order.provider.user,
+                        metadata={"reference_user_id": order.customer.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+                    )
                     return Response(
                         {"status": True, "message": "Pay to Worker Successfully Complete!"},
                         status=status.HTTP_200_OK

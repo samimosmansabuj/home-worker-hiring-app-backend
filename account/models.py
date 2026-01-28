@@ -133,13 +133,12 @@ class OTP(models.Model):
         return f"Your {self.purpose} OTP is {self.code} | {use} & {expired}"
 
 
-
 # Logs Model==============================================
 class ActivityLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     action = models.CharField(max_length=255)
     entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
-    entity_id = models.PositiveBigIntegerField()
+    entity_id = models.PositiveBigIntegerField(blank=True, null=True)
     service = GenericForeignKey('entity_type', 'entity_id')
     metadata = models.JSONField(default=dict)
     ip_address = models.GenericIPAddressField()

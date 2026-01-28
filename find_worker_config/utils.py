@@ -181,17 +181,24 @@ class LogActivityModule:
         return field
     
     def __init__(self, data: dict):
-        self.user = self.get_confirm_data(data.get("user"), "User")
+        user = data.get("user")
+        print("user: ", user)
+        if hasattr(user, "user"):
+            user = user.user
+        self.user = self.get_confirm_data(user, "User")
         self.action = self.get_confirm_data(data.get("action"), "Action")
-        self.entity = self.get_confirm_data(data.get("entity"), "Entity")
+        self.entity = data.get("entity")
         self.request = self.get_confirm_data(data.get("request"), "Request")
         self.metadata = data.get("metadata", {})
         self.need_notify = data.get("for_notify", False)
     
     def get_entity_type(self):
-        if not hasattr(self.entity, "_meta"):
+        if self.entity is None:
+            return None
+        elif not hasattr(self.entity, "_meta"):
             raise Exception("Entity must be a Django model instance.")
-        return ContentType.objects.get_for_model(self.entity)
+        else:
+            return ContentType.objects.get_for_model(self.entity)
 
     def get_ip(self, request):
         xff = request.META.get("HTTP_X_FORWARDED_FOR")
@@ -199,17 +206,24 @@ class LogActivityModule:
             return xff.split(",")[0]
         return request.META.get("REMOTE_ADDR")
 
+    def get_data(self):
+        dict_data = {
+            "user": self.user,
+            "action": self.action,
+            "metadata": self.metadata,
+            "ip_address": self.get_ip(self.request),
+            "need_notify": self.need_notify
+        }
+        if self.entity:
+            dict_data["entity_type"] = self.get_entity_type()
+            dict_data["entity_id"] = self.entity.id
+        return dict_data
+
     def create(self):
         try:
             with transaction.atomic():
                 log = ActivityLog.objects.create(
-                    user=self.user,
-                    action=self.action,
-                    entity_type=self.get_entity_type(),
-                    entity_id=self.entity.id,
-                    metadata=self.metadata,
-                    ip_address=self.get_ip(self.request),
-                    need_notify=self.need_notify
+                    **self.get_data()
                 )
                 return log
         except Exception as e:
