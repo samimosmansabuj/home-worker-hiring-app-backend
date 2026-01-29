@@ -325,10 +325,21 @@ class UserInfoSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 
+
+
+
+
 class ProviderVerificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProviderVerification
         fields = "__all__"
+        read_only_fields = ["provider"]
+    
+    def validate(self, attrs):
+        document = attrs.get("document")
+        if not document:
+            raise ValidationError("Document must be submitted.")
+        return super().validate(attrs)
     
     def to_representation(self, instance):
         data = super().to_representation(instance)

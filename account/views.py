@@ -12,7 +12,7 @@ from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile
 from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer, ProviderVerificationSerializer
-from .utils import generate_otp
+from .utils import generate_otp, KYCVerificationService
 from django.db.models import Q
 from find_worker_config.permissions import IsCustomer, IsValidFrontendRequest
 from find_worker_config.model_choice import OTPType, UserRole, UserDefault
@@ -717,6 +717,7 @@ class UserAddressViews(UpdateModelViewSet):
         self.create_log(address_serializer, "Add new address")
         return address_serializer
 
+
 class ProviderVerificationViews(APIView):
     serializer_class = ProviderVerificationSerializer
     permission_classes = [IsAuthenticated]
@@ -744,17 +745,41 @@ class ProviderVerificationViews(APIView):
                 }
             )
     
-    def post(self, request, *args, **kwargs):
-        serializer = self.serializer_class(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        return Response(
-            {
-                "status": True,
-                # "data": serializer.data
-            }, status=status.HTTP_200_OK
-        )
+    def post(self, request):
+        try:
+            if not self.request.user.hasServiceProviderProfile:
+                raise Exception("This user have no provider profile.")
+            
+            verification = request.user.hasServiceProviderProfile.verification
+            serializer = self.serializer_class(verification, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            image_path = verification.document.path
 
+            service = KYCVerificationService(image_path, request.user)
+            result = service.verify()
+            print("result: ", result)
+
+            # verification.is_verified = result["verified"]
+            # verification.verification_method = result["method"]
+            # verification.verification_score = result["score"]
+            # verification.save()
+            
+            return Response(
+                {
+                    "status": True,
+                    "kyc_result": result
+                },
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
 # User Info Current ===========================
 
 
