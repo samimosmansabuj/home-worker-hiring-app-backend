@@ -35,6 +35,12 @@ class DocumentType(models.TextChoices):
     NID = "NID"
     DRIVING_LICENSE = "DRIVING_LICENSE"
 
+class DocumentStatus(models.TextChoices):
+    APPROVED = "APPROVED"
+    REVIEW = "REVIEW"
+    FAILED = "FAILED"
+    REJECTED = "REJECTED"
+    
 
 # For Task App===================================================
 class ServiceTaskStatus(models.TextChoices):

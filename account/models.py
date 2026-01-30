@@ -2,7 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, OTPType, UserDefault, DocumentType
+from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, OTPType, UserDefault, DocumentType, DocumentStatus
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -138,6 +138,7 @@ class ProviderVerification(models.Model):
     document_type = models.CharField(max_length=20, choices=DocumentType.choices, blank=True, null=True)
     document = models.ImageField(upload_to="user/verification/", blank=True, null=True)
     is_verified = models.BooleanField(default=False)
+    status = models.CharField(max_length=20, choices=DocumentStatus.choices, default=DocumentStatus.REVIEW)
     update_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):

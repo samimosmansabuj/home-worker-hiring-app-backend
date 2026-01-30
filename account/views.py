@@ -15,7 +15,7 @@ from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, Si
 from .utils import generate_otp, KYCVerificationService
 from django.db.models import Q
 from find_worker_config.permissions import IsCustomer, IsValidFrontendRequest
-from find_worker_config.model_choice import OTPType, UserRole, UserDefault
+from find_worker_config.model_choice import OTPType, UserRole, UserDefault, DocumentStatus
 from .models import User, OTP, ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet
@@ -750,7 +750,8 @@ class ProviderVerificationViews(APIView):
             if not self.request.user.hasServiceProviderProfile:
                 raise Exception("This user have no provider profile.")
             
-            verification = request.user.hasServiceProviderProfile.verification
+            provider = request.user.hasServiceProviderProfile
+            verification = provider.verification
             serializer = self.serializer_class(verification, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
             serializer.save()
@@ -758,13 +759,12 @@ class ProviderVerificationViews(APIView):
 
             service = KYCVerificationService(image_path, request.user)
             result = service.verify()
-            print("result: ", result)
 
-            # verification.is_verified = result["verified"]
-            # verification.verification_method = result["method"]
-            # verification.verification_score = result["score"]
-            # verification.save()
-            
+            provider.is_verified = result.get('verified', False)
+            provider.save(update_fields=["is_verified"])
+            verification.is_verified = result.get('verified', False)
+            verification.status == DocumentStatus.APPROVED if result.get('verified', False) else result.get("status", DocumentStatus.FAILED)
+            verification.save(update_fields=["is_verified", "status"])            
             return Response(
                 {
                     "status": True,

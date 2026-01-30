@@ -1,18 +1,18 @@
 from rest_framework import serializers
-from find_worker_config.model_choice import OTPType
+from find_worker_config.model_choice import OTPType, DocumentStatus
 from django.db.models import Q
-import random
 import string
 import secrets
 import cv2
 import re
-import easyocr
 from passporteye import read_mrz
 from rapidfuzz import fuzz
 from dotenv import load_dotenv
 import os
 import requests
 import base64
+from difflib import SequenceMatcher
+from .regressions import DataRegressionFromPassportImage
 
 def generate_otp(length=6):
     if length <= 0:
@@ -48,46 +48,50 @@ pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tessera
 class KYCVerificationService:
     MRZ_MATCH_THRESHOLD = 90
     GOOGLE_MATCH_THRESHOLD = 90
-    OCR_MATCH_THRESHOLD = 80
 
     def __init__(self, image_path, user):
         self.image_path = image_path
         self.user = user
-        self.reader = easyocr.Reader(['en'], gpu=False)
-
+    
     def normalize_name(self, name: str) -> str:
         return re.sub(r'[^A-Z ]', '', name.upper()).strip()
 
-    def user_full_name(self):
-        return self.normalize_name(
-            f"{self.user.first_name} {self.user.last_name}"
-        )
+    def normalize_ocr_chars(self, text: str) -> str:
+        replacements = {
+            '0': 'O',
+            '1': 'I',
+            '5': 'S',
+            '8': 'B',
+        }
+        for k, v in replacements.items():
+            text = text.replace(k, v)
+        return text
 
-    def preprocess_image(self):
-        img = cv2.imread(self.image_path)
-        if img is None:
-            raise Exception("Invalid image path")
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        gray = cv2.bilateralFilter(gray, 11, 17, 17)
-        thresh = cv2.adaptiveThreshold(
-            gray, 255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY, 11, 2
-        )
-        return thresh
+    def normalize_person_name(self, raw_name: str) -> str:
+        if not raw_name:
+            return ""
+        name = self.normalize_ocr_chars(raw_name.upper().strip())
+        name = re.sub(r'^(K\s*G\s*)', '', name).strip() # Remove KG prefix
+        name = re.sub(r'[^A-Z ]', '', name).strip() # Remove special characters
+        name = re.sub(r'\s+', ' ', name).strip() # Normalize spaces
+        return name.strip()
+    
+    def user_full_name(self) -> string:
+        first_name = self.user.first_name.upper()
+        last_name = self.user.last_name.upper()
+        return f"{first_name} {last_name}"
 
     # ---------- MRZ OCR ----------
-    def extract_from_mrz(self):
+    def extract_from_mrz(self) -> dict:
         mrz = read_mrz(self.image_path)
         if not mrz:
             return None
         data = mrz.to_dict()
-        full_name = f"{data.get('names', '')} {data.get('surname', '')}"
-        print("mrzocr full: ", data)
+        names = self.normalize_person_name(data.get('names', '').strip("K"))
+        surname = self.normalize_person_name(data.get('surname', ''))
+        full_name = f"{names} {surname}"
         return {
-            "method": "MRZ",
-            "name": self.normalize_name(full_name),
-            "raw": data
+            "name": full_name
         }
 
     # ---------- GOOGLE VISSION OCR ----------
@@ -111,79 +115,64 @@ class KYCVerificationService:
         if "error" in result:
             raise Exception(result["error"]["message"])
         text = result["responses"][0].get("fullTextAnnotation", {}).get("text", "")
-        print("google vision full: ", text)
-        return {
-            "method": "GOOGLE VISION",
-            "name": self.normalize_name(text),
-            "raw": text
-        }
+        extraction_object = DataRegressionFromPassportImage(text)
+        extract_data = extraction_object.extract()
 
-    # ---------- EASY OCR ----------
-    def extract_from_easyocr(self):
-        processed = self.preprocess_image()
-        results = self.reader.readtext(processed, detail=0)
-        full_text = " ".join(results)
-        print("easyocr full: ", full_text)
         return {
-            "method": "OCR",
-            "name": self.normalize_name(full_text),
-            "raw": full_text
+            "name": extract_data["name"],
+            "dob": extract_data["dob"]
         }
 
     # ---------- NAME MATCH ----------
-    def calculate_match_score(self, extracted_name):
-        return fuzz.token_sort_ratio(
+    def calculate_match_score_partial_ratio(self, extracted_name):
+        return fuzz.partial_ratio(
             self.user_full_name(),
             extracted_name
         )
 
+    def name_match_score(self, extracted_name):
+        return SequenceMatcher(None, self.user_full_name(), extracted_name).ratio() * 100
+    
+    def get_best_score(self, score_fuzz, score_diff):
+        return max(score_fuzz, score_diff)
+        
     # ---------- MAIN VERIFICATION ----------
     def verify(self):
-        print("user_full_name: ", self.user_full_name())
-        print("=================================================")
-        print("-------------------MRZ OCR----------------------")
+        # -------------------MRZ OCR----------------------
         mrz_data = self.extract_from_mrz()
         if mrz_data:
-            score = self.calculate_match_score(mrz_data["name"])
-            print("mrz score: ", score)
-            if score >= self.MRZ_MATCH_THRESHOLD:
-                return self._verified_response(mrz_data, score)
+            mrz_score_fuzz = self.calculate_match_score_partial_ratio(mrz_data["name"])
+            mrz_score_diff = self.name_match_score(mrz_data["name"])
+            mrz_score = self.get_best_score(mrz_score_fuzz, mrz_score_diff)
+            if mrz_score >= self.MRZ_MATCH_THRESHOLD:
+                return self._verified_response(mrz_score, "MRZ")
         
-        print("-------------------EASY OCR----------------------")
-        ocr_data = self.extract_from_easyocr()
-        if ocr_data:
-            score = self.calculate_match_score(ocr_data["name"])
-            print("easyocs score: ", score)
-            if score >= self.OCR_MATCH_THRESHOLD:
-                return self._verified_response(ocr_data, score)
-
-        print("--------------GOOGLE VISION OCR-----------------")
+        # --------------GOOGLE VISION OCR-----------------
         google_vision_data = self.extract_google_vision()
         if google_vision_data:
-            score = self.calculate_match_score(google_vision_data["name"])
-            print("google vision score: ", score)
-            if score >= self.GOOGLE_MATCH_THRESHOLD:
-                return self._verified_response(ocr_data, score)
-
-        return self._manual_review_response(ocr_data, score)
+            google_score_fuzz = self.calculate_match_score_partial_ratio(google_vision_data["name"])
+            google_score_diff = self.name_match_score(google_vision_data["name"])
+            google_score = self.get_best_score(google_score_fuzz, google_score_diff)
+            if google_score >= self.GOOGLE_MATCH_THRESHOLD:
+                return self._verified_response(google_score, "GOOGLE VISION")
+        
+        highest_score = max(google_score, mrz_score)
+        if 90 > highest_score > 70:
+            status = DocumentStatus.REVIEW
+        else:
+            status = DocumentStatus.FAILED
+        return self._manual_review_response(highest_score,  status)
 
     # ---------- RESPONSES ----------
-    def _verified_response(self, data, score):
+    def _verified_response(self, score, method):
         return {
             "verified": True,
-            "status": "VERIFIED",
-            "method": data["method"],
             "score": score,
-            "confidence": "HIGH" if data["method"] == "MRZ" else "MEDIUM",
+            "method": method
         }
 
-    def _manual_review_response(self, data, score):
+    def _manual_review_response(self, score, status):
         return {
             "verified": False,
-            "status": "MANUAL_REVIEW",
-            "method": data["method"],
-            "score": score,
-            "confidence": "LOW",
+            "status": status
         }
-
-
