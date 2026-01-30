@@ -15,7 +15,7 @@ from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, Si
 from .utils import generate_otp, KYCVerificationService
 from django.db.models import Q
 from find_worker_config.permissions import IsCustomer, IsValidFrontendRequest
-from find_worker_config.model_choice import OTPType, UserRole, UserDefault, DocumentStatus
+from find_worker_config.model_choice import OTPType, UserRole, UserDefault, DocumentStatus, UserStatus
 from .models import User, OTP, ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet
@@ -25,6 +25,7 @@ from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from rest_framework.permissions import IsAuthenticated
 from find_worker_config.utils import LogActivityModule
 from django.db import transaction
+from django.utils.translation import gettext_lazy as _
 
 
 class WelComeAPI(APIView):
@@ -749,9 +750,12 @@ class ProviderVerificationViews(APIView):
         try:
             if not self.request.user.hasServiceProviderProfile:
                 raise Exception("This user have no provider profile.")
-            
+                        
             provider = request.user.hasServiceProviderProfile
             verification = provider.verification
+            if request.user.status == UserStatus.ACTIVE and provider.is_verified and verification.is_verified:
+                raise Exception(_("Already Verified!"))
+
             serializer = self.serializer_class(verification, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
             serializer.save()

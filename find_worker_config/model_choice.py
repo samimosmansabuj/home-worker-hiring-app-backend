@@ -11,8 +11,8 @@ class UserDefault(models.TextChoices):
     PROVIDER = "PROVIDER", _("Provider")
 
 class UserLanguage(models.TextChoices):
-    EN = "English"
-    ZH = "Chinese"
+    EN = "en"
+    ZH = "zh"
 
 class UserStatus(models.TextChoices):
     ACTIVE = "ACTIVE"
