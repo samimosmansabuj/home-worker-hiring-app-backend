@@ -13,6 +13,7 @@ import requests
 import base64
 from difflib import SequenceMatcher
 from .regressions import DataRegressionFromPassportImage
+from django.core.files.storage import default_storage
 
 def generate_otp(length=6):
     if length <= 0:
@@ -40,7 +41,15 @@ def get_otp_object(data, type):
     otp_object.save(update_fields=["is_used"])
     return otp_object
 
+def image_delete_os(picture):
+    if picture and default_storage.exists(picture.name):
+        default_storage.delete(picture.name)
+        return True
 
+def previous_image_delete_os(oldpicture, newpicture):
+    if oldpicture and oldpicture != newpicture and default_storage.exists(oldpicture.name):
+        default_storage.delete(oldpicture.name)
+        return True
 
 import pytesseract
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"

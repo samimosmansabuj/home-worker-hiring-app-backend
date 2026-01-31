@@ -140,40 +140,6 @@ class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-# class NotificationModule:
-#     def get_confirm_field(self, field, field_name):
-#         if not field:
-#             raise Exception(f"{field_name} is missing.")
-#         return field
-    
-#     def __init__(self, data: dict):
-#         self.received = self.get_confirm_field(data.get("received"), "Received User")
-#         self.action = self.get_confirm_field(data.get("action"), "Action")
-#         self.type = self.get_confirm_field(data.get("type"), "Type")
-#         self.entity = self.get_confirm_field(data.get("entity"), "Entity")
-#         self.metadata = data.get("metadata", {})
-    
-#     def get_entity_type(self):
-#         if not hasattr(self.entity, "_meta"):
-#             raise Exception("Entity must be a Django model instance.")
-#         return ContentType.objects.get_for_model(self.entity)
-
-#     def create(self):
-#         try:
-#             with transaction.atomic():
-#                 notification = Notification.objects.create(
-#                     received=self.user,
-#                     action=self.action,
-#                     type=self.type,
-#                     entity_type=self.get_entity_type(),
-#                     entity_id=self.entity.id,
-#                     metadata=self.metadata,
-#                 )
-#                 return notification
-#         except Exception as e:
-#             # print("error: ", e)
-#             raise Exception("Someting wrong for create Notification!")
-
 class LogActivityModule:
     def get_confirm_data(self, field, field_name):
         if not field:
@@ -305,4 +271,7 @@ class PaymentTransactionModule:
 # if email:
 #     query &= Q(email=email)
 # otp_object = OTP.objects.filter(query).last()
+
+
+
 

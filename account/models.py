@@ -6,7 +6,8 @@ from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus,
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
-from .utils import generate_otp
+from .utils import generate_otp, image_delete_os, previous_image_delete_os
+# from .utils import *
 
 # Custom User Model====================================
 class User(AbstractBaseUser, PermissionsMixin):
@@ -42,6 +43,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     def hasServiceProviderProfile(self):
         return self.service_provider_profile or None
     
+    def image_update(self, instance):
+        previous_image_delete_os(instance.photo, self.photo)
+    
+    def delete(self, *args, **kwargs):
+        image_delete_os(self.photo)
+        return super().delete(*args, **kwargs)
+
     def generate_username(self):
         if self.first_name and self.last_name:
             username = f"{self.first_name.replace(" ", "")}{self.last_name.replace(" ", "")}"
@@ -58,6 +66,9 @@ class User(AbstractBaseUser, PermissionsMixin):
         return username.lower()
 
     def save(self, *args, **kwargs):
+        if self.pk and User.objects.filter(pk=self.pk).exists():
+            instance = User.objects.get(pk=self.pk)
+            self.image_update(instance)
         if not self.username: self.username = self.generate_username()
         return super().save(*args, **kwargs)
 
@@ -141,6 +152,20 @@ class ProviderVerification(models.Model):
     status = models.CharField(max_length=20, choices=DocumentStatus.choices, default=DocumentStatus.REVIEW)
     update_at = models.DateTimeField(auto_now=True)
 
+    def image_update(self, instance):
+        previous_image_delete_os(instance.document, self.document)
+    
+    def delete(self, *args, **kwargs):
+        image_delete_os(self.document)
+        return super().delete(*args, **kwargs)
+    
+    def save(self, *args, **kwargs):
+        if self.pk and ProviderVerification.objects.filter(pk=self.pk).exists():
+            instance = ProviderVerification.objects.get(pk=self.pk)
+            self.image_update(instance)
+        
+        return super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.provider.user.first_name} {self.provider.user.last_name} Provider Profile is Verified: {self.is_verified}"
 
@@ -171,10 +196,39 @@ class SignUpSlider(models.Model):
     create_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def image_update(self, instance):
+        previous_image_delete_os(instance.photo, self.photo)
+    
+    def delete(self, *args, **kwargs):
+        image_delete_os(self.photo)
+        return super().delete(*args, **kwargs)
+    
+    def save(self, *args, **kwargs):
+        if self.pk and SignUpSlider.objects.filter(pk=self.pk).exists():
+            instance = SignUpSlider.objects.get(pk=self.pk)
+            self.image_update(instance)
+        
+        return super().save(*args, **kwargs)
+
 class CustomerScreenSlide(models.Model):
     text = models.TextField(max_length=255)
     photo = models.ImageField(upload_to="slide/customer-screen/", blank=True, null=True)
     is_active = models.BooleanField(default=True)
     create_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def image_update(self, instance):
+        previous_image_delete_os(instance.photo, self.photo)
+    
+    def delete(self, *args, **kwargs):
+        image_delete_os(self.photo)
+        return super().delete(*args, **kwargs)
+    
+    def save(self, *args, **kwargs):
+        if self.pk and CustomerScreenSlide.objects.filter(pk=self.pk).exists():
+            instance = CustomerScreenSlide.objects.get(pk=self.pk)
+            self.image_update(instance)
+        
+        return super().save(*args, **kwargs)
+
 
