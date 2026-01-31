@@ -5,7 +5,7 @@ from find_worker_config.model_choice import SendMessageType, CustomOfferStatus, 
 import uuid
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
-
+from account.utils import image_delete_os, previous_image_delete_os
 
 class ChatRoom(models.Model):
     uuid = models.CharField(max_length=255, blank=True, null=True)
@@ -44,6 +44,18 @@ class Attachment(models.Model):
     mime = models.CharField(max_length=100, blank=True, default="")
     name = models.CharField(max_length=255, blank=True, default="")
     size = models.BigIntegerField(default=0)
+
+    def image_update(self, instance):
+        previous_image_delete_os(instance.file, self.file)
+    
+    def delete(self, *args, **kwargs):
+        image_delete_os(self.file)
+        return super().delete(*args, **kwargs)
+    
+    def save(self, *args, **kwargs):
+        if self.pk and Attachment.objects.filter(pk=self.pk).exists():
+            instance = Attachment.objects.get(pk=self.pk)
+            self.image_update(instance)
 
 
 class Notification(models.Model):
