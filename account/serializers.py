@@ -12,6 +12,18 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework.exceptions import ValidationError
 from django.core.mail import send_mail
 
+# OAuth2 imports
+from google.oauth2 import id_token
+from google.auth.transport import requests
+import requests as req
+from django.conf import settings
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.core.files.base import ContentFile
+
+User = get_user_model()
+
+
+
 # =================================================================
 # Login With OTP Start===========================
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -230,6 +242,17 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 # Password Change & Reset---------------
 # =================================================================
+
+
+
+
+# =================================================================
+# Social Auth Login System Serializer Start---------------
+
+# Social Auth Login System Serializer END---------------
+# =================================================================
+
+
 
 # =================================================================
 # User Info Current ===========================

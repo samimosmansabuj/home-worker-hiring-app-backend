@@ -22,10 +22,16 @@ from find_worker_config.utils import UpdateModelViewSet
 from django.contrib.contenttypes.models import ContentType
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from find_worker_config.utils import LogActivityModule
 from django.db import transaction
 from django.utils.translation import gettext_lazy as _
+from django.contrib.auth import get_user_model
+from urllib.parse import urlparse
+from django.core.files.base import ContentFile
+User = get_user_model()
+import requests
+import os
 
 
 class WelComeAPI(APIView):
@@ -367,62 +373,174 @@ class UserSignUpOTPVerifyView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
 
-
-# class SocialLoginCompleteView(APIView):
-#     # permission_classes = []
-#     def post(self, request, backend, *args, **kwargs):
-#         user = request.user
-#         refresh = RefreshToken.for_user(user)
-#         print("refresh: ", refresh)
-#         print("backend: ", backend)
-
-#         return Response({
-#             "access": str(refresh.access_token),
-#             "refresh": str(refresh),
-#             "user": {
-#                 "id": user.id,
-#                 "email": user.email,
-#                 "username": user.username,
-#             }
-#         })
-    
-#     def get(self, request, backend, *args, **kwargs):
-#         user = request.user
-#         refresh = RefreshToken.for_user(user)
-#         print("refresh: ", refresh)
-#         print("backend: ", backend)
-
-#         return Response({
-#             "access": str(refresh.access_token),
-#             "refresh": str(refresh),
-#             "user": {
-#                 "id": user.id,
-#                 "email": user.email,
-#                 "username": user.username,
-#             }
-#         })
-
-# class SocialAuthSuccessView(APIView):
-#     permission_classes = [IsAuthenticated]
-
-#     def get(self, request):
-#         user = request.user
-#         refresh = RefreshToken.for_user(user)
-
-#         return Response({
-#             "access": str(refresh.access_token),
-#             "refresh": str(refresh),
-#             "user": {
-#                 "id": user.id,
-#                 "email": user.email,
-#                 "username": user.username,
-#             }
-#         })
-
-# def social_auth_redirect(request, backend, *args, **kwargs):
-#     return HttpResponse("Success")
-
 # SignUp With OTP End===========================
+
+
+
+
+# =================================================================
+# Social Auth Login System Views Start---------------
+class GoogleLoginAPIView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def google_response(self, access_token: str) -> dict:
+        response = requests.get(
+            "https://oauth2.googleapis.com/tokeninfo",
+            # "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=5
+        )
+        if response.status_code != 200:
+            raise Exception("Invalid Google token")
+        google_data = response.json()
+
+        # if data.get("aud") != settings.GOOGLE_CLIENT_ID:
+        #     raise Exception("Token audience mismatch")
+
+        return google_data
+    
+    def save_google_profile_photo(self, user: object, picture_url: str) -> bool:
+        response = requests.get(picture_url, timeout=10)
+        if response.status_code != 200:
+            return
+        filename = f"user_{user.id}_google.jpg"
+        user.photo.save(filename, ContentFile(response.content), save=True)
+        return True
+
+    def get_user(self, google_data: dict) -> object:
+        email = google_data.get("email")
+        first_name = google_data.get("given_name", "")
+        last_name = google_data.get("family_name", "")
+        picture = google_data.get("picture", "")
+
+        if not email:
+            raise Exception("Email not available.")
+
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "first_name": first_name,
+                "last_name": last_name
+            }
+        )
+
+        if created and not user.phone and picture:
+            self.save_google_profile_photo(user, picture)
+
+        return user
+
+    def post(self, request):
+        try:
+            with transaction.atomic():
+                access_token = request.data.get('access_token')
+
+                if not access_token:
+                    raise Exception("access_token is required")
+                
+                google_data = self.google_response(access_token)
+
+                user = self.get_user(google_data)
+                refresh = RefreshToken.for_user(user)
+                return Response(
+                    {
+                        "status": True,
+                        "data": {
+                            "access": str(refresh.access_token),
+                            "refresh": str(refresh),
+                        }
+                    }, status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }
+            )
+
+class AppleLoginAPIView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def google_response(self, access_token: str) -> dict:
+        response = requests.get(
+            "https://oauth2.googleapis.com/tokeninfo",
+            # "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=5
+        )
+        if response.status_code != 200:
+            raise Exception("Invalid Google token")
+        google_data = response.json()
+
+        # if data.get("aud") != settings.GOOGLE_CLIENT_ID:
+        #     raise Exception("Token audience mismatch")
+
+        return google_data
+    
+    def save_google_profile_photo(self, user: object, picture_url: str) -> bool:
+        response = requests.get(picture_url, timeout=10)
+        if response.status_code != 200:
+            return
+        filename = f"user_{user.id}_google.jpg"
+        user.photo.save(filename, ContentFile(response.content), save=True)
+        return True
+
+    def get_user(self, google_data: dict) -> object:
+        email = google_data.get("email")
+        first_name = google_data.get("given_name", "")
+        last_name = google_data.get("family_name", "")
+        picture = google_data.get("picture", "")
+
+        if not email:
+            raise Exception("Email not available.")
+
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "first_name": first_name,
+                "last_name": last_name
+            }
+        )
+
+        if created and not user.phone and picture:
+            self.save_google_profile_photo(user, picture)
+
+        return user
+
+    def post(self, request):
+        try:
+            with transaction.atomic():
+                access_token = request.data.get('access_token')
+
+                if not access_token:
+                    raise Exception("access_token is required")
+                
+                google_data = self.google_response(access_token)
+
+                user = self.get_user(google_data)
+                refresh = RefreshToken.for_user(user)
+                return Response(
+                    {
+                        "status": True,
+                        "data": {
+                            "access": str(refresh.access_token),
+                            "refresh": str(refresh),
+                        }
+                    }, status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }
+            )
+
+
+# Social Auth Login System Views END---------------
+# =================================================================
 
 
 
@@ -717,7 +835,6 @@ class UserAddressViews(UpdateModelViewSet):
         address_serializer = serializer.save(profile_type=ContentType.objects.get_for_model(profile), object_id=profile.id)
         self.create_log(address_serializer, "Add new address")
         return address_serializer
-
 
 class ProviderVerificationViews(APIView):
     serializer_class = ProviderVerificationSerializer

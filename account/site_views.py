@@ -5,6 +5,7 @@ from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelView
 from find_worker_config.permissions import IsAdminWritePermissionOnly, ForAdminProfile
 from task.models import AdminWallet, PaymentTransaction
 from rest_framework.response import Response
+from find_worker_config.model_choice import UserLanguage
 
 # SignUp Slider Views===============================
 class SignUpSliderViewset(UpdateModelViewSet):
@@ -31,5 +32,39 @@ class AdminWalletViews(views.APIView):
             }
         )
 
-
+class UserDefaultLanguage(views.APIView):
+    def get(self, request, *args, **kwargs):
+        if request.session["language"]:
+            return Response(
+                {
+                    "status": True,
+                    "language": request.session["language"]
+                }
+            )
+        elif request.user.is_authenticated:
+            language = request.user.language
+        else:
+            language = UserLanguage.EN
+        request.session["language"] = language
+        return Response(
+            {
+                "status": True,
+                "language": request.session["language"]
+            }
+        )
+    
+    def post(self, request):
+        data = request.data
+        lan = data.get("language" or UserLanguage.EN)
+        if lan in [UserLanguage.EN, UserLanguage.ZH]:
+            language = lan
+        else:
+            language = UserLanguage.EN
+        request.session["language"] = language
+        return Response(
+            {
+                "status": True,
+                "language": request.session["language"]
+            }
+        )
 

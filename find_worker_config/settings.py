@@ -16,6 +16,7 @@ CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
 # Application definition
 INSTALLED_APPS = [
     'channels', 'daphne',
+    'django.contrib.sites',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -27,10 +28,6 @@ INSTALLED_APPS = [
     'rest_framework', 'rest_framework_simplejwt',
     'corsheaders', 'django_extensions', 'django_filters',
     'rest_framework_simplejwt.token_blacklist',
-    
-    # Auth
-    'social_django',
-    
 
     # custom app
     'account', 'chat_notify', 'task',
@@ -38,36 +35,9 @@ INSTALLED_APPS = [
 ]
 
 # ================================================================================
-# ==================== Authenticatino BackendStart====================
-AUTHENTICATION_BACKENDS = (
-    "social_core.backends.google.GoogleOAuth2",
-    "social_core.backends.apple.AppleIdAuth",
-    "django.contrib.auth.backends.ModelBackend",
-)
-SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.getenv('GOOGLE_OAUTH2_KEY')
-SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.getenv('GOOGLE_OAUTH2_SECRET')
-SOCIAL_AUTH_GOOGLE_OAUTH2_SCOPE = [
-    "email",
-    "profile",
-]
+# ==================== Authentication BackendStart====================
 
-
-# SOCIAL_AUTH_APPLE_ID_CLIENT = "com.your.app.service"
-# SOCIAL_AUTH_APPLE_ID_TEAM = "APPLE_TEAM_ID"
-# SOCIAL_AUTH_APPLE_ID_KEY = "KEY_ID"
-# SOCIAL_AUTH_APPLE_ID_SECRET = """-----BEGIN PRIVATE KEY-----
-# YOUR_PRIVATE_KEY
-# -----END PRIVATE KEY-----"""
-
-# LOGIN_REDIRECT_URL = "/"
-# LOGOUT_REDIRECT_URL = "/"
-LOGIN_REDIRECT_URL = "/api/v1/auth/social/success/"
-LOGOUT_REDIRECT_URL = "/"
-
-
-SOCIAL_AUTH_JSONFIELD_ENABLED = True
-
-# ==================== Authenticatino BackendEnd====================
+# ==================== Authentication BackendEnd====================
 # ================================================================================
 
 # ================================================================================
@@ -231,9 +201,6 @@ MEDIA_ROOT = os.getenv('MEDIA_ROOT', default=os.path.join(BASE_DIR, 'media'))
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'account.User'
 
-# LOGIN_REDIRECT_URL = 'dashboard'
-# LOGOUT_REDIRECT_URL = 'home_page'
-# LOGIN_URL = 'login'
 
 # default is ~2.5 MB; bump to e.g. 20 MB
 DATA_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024
@@ -256,6 +223,4 @@ FRONTEND_APP_KEY=os.getenv("FRONTEND_APP_KEY")
 # =================API Extra Security================================
 # ==========================================================================================
 
-LOGIN_URL = '/login/'
-LOGIN_REDIRECT_URL = '/'
-LOGOUT_REDIRECT_URL = '/'
+

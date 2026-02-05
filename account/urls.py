@@ -1,7 +1,7 @@
 from django.urls import path, include
-from .views import PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews
+from .views import PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView
 from rest_framework.routers import DefaultRouter
-from .site_views import SignUpSliderViewset, CustomerScreenSlideViewset, AdminWalletViews
+from .site_views import SignUpSliderViewset, CustomerScreenSlideViewset, AdminWalletViews, UserDefaultLanguage
 
 router = DefaultRouter()
 router.register(r"address", UserAddressViews, basename="user_address")
@@ -9,6 +9,7 @@ router.register(r"address", UserAddressViews, basename="user_address")
 site_router = DefaultRouter()
 site_router.register(r"signup-slide", SignUpSliderViewset, basename="site-signup-slide")
 site_router.register(r"customer-screen", CustomerScreenSlideViewset, basename="customer-screen")
+
 
 urlpatterns = [
     # Auth Route For All User--------------
@@ -26,21 +27,16 @@ urlpatterns = [
     path("signup/otp/verify/", SignUpOTPVerifyView.as_view(), name="signup_otp_verify"),
     path("auth/signup/", SignUpViews.as_view(), name="signup"),
     path("auth/signup/verify/", UserSignUpOTPVerifyView.as_view(), name="signup-verify"),
-    
 
-    # path('auth/', include('social_django.urls', namespace='social')),
-    # path('auth/complete/google-oauth2/<str:backend>{extra}', social_auth_redirect, name="social_auth_redirect"),
-    # path('auth/complete/google-oauth2/<str:backend>{extra}', SocialLoginCompleteView.as_view(), name="social_auth_redirect"),
-    # path("auth/social/success/", SocialAuthSuccessView.as_view(), name="social_auth_success"),
-
-
+    # Social Auth Login Start--------------
+    path("auth/token/google/", GoogleLoginAPIView.as_view(), name="google-auth"),
+    path("auth/token/apple/", GoogleLoginAPIView.as_view(), name="apple-auth"),
+    # Social Auth Login End--------------
     
     path("current-user/", UserInfoView.as_view(), name="current_user_info"),
     path("user/", include(router.urls)),
     path("provider-verification/", ProviderVerificationViews.as_view(), name="provider-verification"),
-
-
-
+    path("user/language/", UserDefaultLanguage.as_view(), name="user-language"),
 
     # Site Settings Urls========================================
     path("site/", include(site_router.urls)),
