@@ -34,6 +34,7 @@ import requests
 import os
 
 
+
 class WelComeAPI(APIView):
     # permission_classes = [permissions.AllowAny, IsValidFrontendRequest]
     def get(self, request, *args, **kwargs):
@@ -394,10 +395,6 @@ class GoogleLoginAPIView(APIView):
         if response.status_code != 200:
             raise Exception("Invalid Google token")
         google_data = response.json()
-
-        # if data.get("aud") != settings.GOOGLE_CLIENT_ID:
-        #     raise Exception("Token audience mismatch")
-
         return google_data
     
     def save_google_profile_photo(self, user: object, picture_url: str) -> bool:
@@ -812,11 +809,37 @@ class UserAddressViews(UpdateModelViewSet):
             return None
 
     def get_queryset(self):
+        user_mode = self.request.query_params.get("user_mode")
+        user = self.get_user()
         if self.request.user.role == UserRole.USER:
-            return Address.objects.filter(user=self.request.user)
+            if user_mode == UserDefault.PROVIDER:
+                profile_type = ContentType.objects.get_for_model(ServiceProviderProfile.objects.get(user=user))
+                address = Address.objects.filter(user=user, profile_type=profile_type).first()
+            else:
+                profile_type = ContentType.objects.get_for_model(CustomerProfile.objects.get(user=user))
+                address = Address.objects.filter(user=user)
+            return address
         elif self.request.user.role in (UserRole.ADMIN):
             return Address.objects.all()
         raise Exception("Wrong user!")
+    
+    def list(self, request, *args, **kwargs):
+        try:
+            response = UserAddressSerializer(self.get_queryset(), many=True)
+            return Response(
+                {
+                    'status': True,
+                    'count': len(response.data),
+                    'data': response.data
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'status': False,
+                    'messgae': str(e),
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     def create_log(self, entity, action):
         data = {

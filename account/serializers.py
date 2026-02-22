@@ -323,6 +323,7 @@ class UserInfoSerializer(serializers.ModelSerializer):
             if not validated_data["service_provider_profile"]:
                 validated_data.pop("service_provider_profile")
             if service_categories and hasattr(instance, "service_provider_profile"):
+                print("service_categories: ", service_categories)
                 provider = instance.service_provider_profile
                 provider.service_category.set(service_categories)
                 provider.save()
