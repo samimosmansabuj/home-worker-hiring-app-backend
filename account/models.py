@@ -7,7 +7,6 @@ from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from .utils import generate_otp, image_delete_os, previous_image_delete_os
-# from .utils import *
 
 # Custom User Model====================================
 class User(AbstractBaseUser, PermissionsMixin):
@@ -87,6 +86,8 @@ class CustomerProfile(models.Model):
 # Service Provider Profile================================
 class ServiceProviderProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="service_provider_profile")
+    company_name = models.CharField(max_length=100, blank=True, null=True)
+    logo = models.ImageField(upload_to="provider/logo/", blank=True, null=True)
     rating = models.FloatField(default=0)
     total_jobs = models.PositiveIntegerField(default=0)
     service_category = models.ManyToManyField("task.ServiceCategory", blank=True, null=True)
