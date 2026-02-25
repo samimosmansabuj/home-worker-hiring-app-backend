@@ -11,6 +11,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.exceptions import ValidationError
 from django.core.mail import send_mail
+from django.contrib.contenttypes.models import ContentType
 
 # OAuth2 imports
 from google.oauth2 import id_token
@@ -82,7 +83,8 @@ class LoginOTPVerifySerializer(serializers.Serializer):
         refresh = RefreshToken.for_user(user)
         return {
             "access": str(refresh.access_token),
-            "refresh": str(refresh)
+            "refresh": str(refresh),
+            "default_profile": user.default_profile
         }
 # Login With OTP End===========================
 # =================================================================
@@ -116,11 +118,12 @@ class SignUpOTPVerifySerializer(serializers.Serializer):
         refresh = RefreshToken.for_user(user)
         return {
             "access": str(refresh.access_token),
-            "refresh": str(refresh)
+            "refresh": str(refresh),
+            "default_profile": user.default_profile
         }
 
 class SignupSerializer(serializers.ModelSerializer):
-    address = serializers.CharField(write_only=True)
+    # address = serializers.CharField(write_only=True)
     password = serializers.CharField(write_only=True)
     first_name = serializers.CharField(required=True)
     last_name = serializers.CharField(required=True)
@@ -128,7 +131,7 @@ class SignupSerializer(serializers.ModelSerializer):
     phone = serializers.CharField(required=True)
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "email", "phone", "password", "address"]
+        fields = ["first_name", "last_name", "email", "phone", "password"]
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
@@ -141,17 +144,17 @@ class SignupSerializer(serializers.ModelSerializer):
         return value
     
     def create(self, validated_data):
-        address_text = validated_data.pop("address")
+        # address_text = validated_data.pop("address")
         password = validated_data.pop("password")
 
         user = User(**validated_data)
         user.set_password(password)
         user.save()
-        Address.objects.create(
-            user=user,
-            address_line=address_text,
-            is_default=True
-        )
+        # Address.objects.create(
+        #     user=user,
+        #     address_line=address_text,
+        #     is_default=True
+        # )
         self.user = user
         return user
     
@@ -257,11 +260,11 @@ class ChangePasswordSerializer(serializers.Serializer):
 # =================================================================
 # User Info Current ===========================
 class UserAddressSerializer(serializers.ModelSerializer):
-    # user = serializers.PrimaryKeyRelatedField( queryset=User.objects.all(), write_only=True, required=False)
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
     class Meta:
         model = Address
-        fields = "__all__"
+        exclude = ("profile_type", "object_id")
 
 # ---------main---------
 class ServiceCategoryField(serializers.ListField):
@@ -282,23 +285,39 @@ class ServiceProviderProfileSerializer(serializers.ModelSerializer):
     service_category = ServiceCategoryField()
     class Meta:
         model = ServiceProviderProfile
-        fields = ["rating", "total_jobs", "service_category"]
+        fields = ["company_name", "logo", "rating", "total_jobs", "service_category", "is_verified"]
         depth = True
 
 class UserInfoSerializer(serializers.ModelSerializer):
-    addresses = UserAddressSerializer(required=False, many=True)
     service_category = ServiceCategoryField(required=True, source="service_provider_profile.service_category", write_only=True)
+    company_name = serializers.CharField(required=False, source="service_provider_profile.company_name", write_only=True)
+    logo = serializers.ImageField(required=False, source="service_provider_profile.logo", write_only=True)
     customer_profile = CustomerProfileSerializer()
     service_provider_profile = ServiceProviderProfileSerializer()
     profile = serializers.ChoiceField(choices=UserDefault.choices, write_only=True)
-    default_user = serializers.CharField(read_only=True)
+    default_profile = serializers.CharField(read_only=True)
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "username", "email", "phone", "photo", "language", "addresses", "service_category", "customer_profile", "service_provider_profile", "profile", "default_user"]
+        fields = ["first_name", "last_name", "username", "email", "phone", "photo", "language", "service_category", "company_name", "logo", "customer_profile", "service_provider_profile", "profile", "default_profile"]
     
     def get_photo_url(self, photo, request):
         if photo and request:
             return request.build_absolute_uri(photo)
+        else:
+            return None
+    
+    def get_user_profile_address(self, email, user_mode):
+        user = User.objects.get(email=email)
+        if user_mode == UserDefault.CUSTOMER:
+            profile_type = ContentType.objects.get_for_model(user.customer_profile)
+        elif user_mode == UserDefault.PROVIDER:
+            profile_type = ContentType.objects.get_for_model(user.service_provider_profile)
+        else:
+            return None
+        
+        address = Address.objects.filter(user=user, profile_type=profile_type, is_default=True).first()
+        if address:
+            return f"{address.address_line} {address.city}"
         else:
             return None
 
@@ -307,6 +326,9 @@ class UserInfoSerializer(serializers.ModelSerializer):
         user_mode = self.context.get("user_mode")
         request = self.context.get("request")
         data["photo"] = self.get_photo_url(data.get("photo"), request)
+        address = self.get_user_profile_address(data.get("email"), user_mode)
+        data["address"] = address
+
         if user_mode == UserDefault.CUSTOMER:
             data.pop("service_provider_profile")
         elif user_mode == UserDefault.PROVIDER:
@@ -316,16 +338,22 @@ class UserInfoSerializer(serializers.ModelSerializer):
             data.pop("customer_profile")
         return data
 
-    def set_provider_category(self, instance, validated_data):
+    def set_provider_data(self, instance, validated_data):
         user_mode = self.context.get("user_mode")
         if user_mode == UserDefault.PROVIDER and validated_data.get("service_provider_profile"):
             service_categories = validated_data["service_provider_profile"].pop("service_category", None)
+            company_name = validated_data["service_provider_profile"].pop("company_name", None)
+            logo = validated_data["service_provider_profile"].pop("logo", None)
             if not validated_data["service_provider_profile"]:
                 validated_data.pop("service_provider_profile")
-            if service_categories and hasattr(instance, "service_provider_profile"):
-                print("service_categories: ", service_categories)
+            if hasattr(instance, "service_provider_profile"):
                 provider = instance.service_provider_profile
-                provider.service_category.set(service_categories)
+                if service_categories:
+                    provider.service_category.set(service_categories)
+                if company_name:
+                    provider.company_name = company_name
+                if logo:
+                    provider.logo = logo
                 provider.save()
         else:
             if validated_data.get("service_provider_profile"): validated_data.pop("service_provider_profile")
@@ -341,9 +369,10 @@ class UserInfoSerializer(serializers.ModelSerializer):
         profile = validated_data.pop("profile", None)
         if profile in (UserDefault.CUSTOMER, UserDefault.PROVIDER):
             self.create_user_default_profile(instance, profile)
-            default_user = profile
-            validated_data["default_user"] = default_user
-        validated_data = self.set_provider_category(instance, validated_data)
+            validated_data["default_profile"] = profile
+        
+        validated_data = self.set_provider_data(instance, validated_data)
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()

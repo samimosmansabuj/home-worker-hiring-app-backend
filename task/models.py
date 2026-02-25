@@ -18,6 +18,18 @@ class ServiceCategory(models.Model):
     def __str__(self):
         return self.title
 
+class ServiceSubCategory(models.Model):
+    category = models.ForeignKey(ServiceCategory, on_delete=models.CASCADE)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    icon = models.CharField(max_length=20, blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.title} of {self.category.title}"
+
 class Order(models.Model):
     category = models.ForeignKey(ServiceCategory, on_delete=models.CASCADE)
     customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name="orders_as_customer")

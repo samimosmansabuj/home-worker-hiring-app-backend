@@ -65,10 +65,12 @@ class PasswordLoginViews(TokenObtainPairView):
             serializer.is_valid(raise_exception=True)
             user = serializer.get_user()
             self.create_log(user, "New Login", user)
+            data = serializer.validated_data
+            data["default_profile"] = user.default_profile
             return Response(
                 {
                     "status": True,
-                    "data": serializer.validated_data
+                    "data": data
                 }, status=status.HTTP_200_OK
             )
         except ValidationError:
@@ -445,6 +447,7 @@ class GoogleLoginAPIView(APIView):
                         "data": {
                             "access": str(refresh.access_token),
                             "refresh": str(refresh),
+                            "default_profile": user.default_profile
                         }
                     }, status=status.HTTP_200_OK
                 )
@@ -735,13 +738,13 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
         user = self.get_object()
         if user_mode == UserDefault.CUSTOMER:
             profile, _ = CustomerProfile.objects.get_or_create(user=user)
-            if not ServiceProviderProfile.objects.filter(user=user).exists() and not user.default_user:
-                user.default_user = UserDefault.CUSTOMER
+            if not ServiceProviderProfile.objects.filter(user=user).exists() and not user.default_profile:
+                user.default_profile = UserDefault.CUSTOMER
             return profile
         elif user_mode == UserDefault.PROVIDER:
             profile, _ = ServiceProviderProfile.objects.get_or_create(user=user)
-            if not CustomerProfile.objects.filter(user=user).exists() and not user.default_user:
-                user.default_user = UserDefault.PROVIDER
+            if not CustomerProfile.objects.filter(user=user).exists() and not user.default_profile:
+                user.default_profile = UserDefault.PROVIDER
             return profile
         else:
             return None
@@ -780,7 +783,6 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
                 )
         except ValidationError as e:
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            
             return Response(
                 {
                     "status": False,
@@ -806,18 +808,20 @@ class UserAddressViews(UpdateModelViewSet):
             profile, _ = ServiceProviderProfile.objects.get_or_create(user=user)
             return profile
         else:
-            return None
+            raise Exception("No Profile Mode Setup.")
 
     def get_queryset(self):
         user_mode = self.request.query_params.get("user_mode")
         user = self.get_user()
         if self.request.user.role == UserRole.USER:
             if user_mode == UserDefault.PROVIDER:
-                profile_type = ContentType.objects.get_for_model(ServiceProviderProfile.objects.get(user=user))
-                address = Address.objects.filter(user=user, profile_type=profile_type).first()
+                profile_type = ContentType.objects.get_for_model(user.service_provider_profile)
+                address = Address.objects.filter(user=user, profile_type=profile_type)
+            elif user_mode == UserDefault.CUSTOMER:
+                profile_type = ContentType.objects.get_for_model(user.customer_profile)
+                address = Address.objects.filter(user=user, profile_type=profile_type)
             else:
-                profile_type = ContentType.objects.get_for_model(CustomerProfile.objects.get(user=user))
-                address = Address.objects.filter(user=user)
+                raise Exception("No Profile Mode Setup.")
             return address
         elif self.request.user.role in (UserRole.ADMIN):
             return Address.objects.all()
@@ -857,6 +861,13 @@ class UserAddressViews(UpdateModelViewSet):
         profile = self.get_user_mode_profile(user_mode)
         address_serializer = serializer.save(profile_type=ContentType.objects.get_for_model(profile), object_id=profile.id)
         self.create_log(address_serializer, "Add new address")
+        return address_serializer
+    
+    def perform_update(self, serializer):
+        user_mode = self.request.query_params.get("user_mode")
+        profile = self.get_user_mode_profile(user_mode)
+        address_serializer = serializer.save(profile_type=ContentType.objects.get_for_model(profile), object_id=profile.id)
+        self.create_log(address_serializer, "Update address")
         return address_serializer
 
 class ProviderVerificationViews(APIView):

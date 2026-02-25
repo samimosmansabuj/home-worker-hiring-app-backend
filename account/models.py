@@ -2,11 +2,14 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from django.db.models import Q
 from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, OTPType, UserDefault, DocumentType, DocumentStatus
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from .utils import generate_otp, image_delete_os, previous_image_delete_os
+from django.db import transaction
+
 
 # Custom User Model====================================
 class User(AbstractBaseUser, PermissionsMixin):
@@ -17,7 +20,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(max_length=255, unique=True, blank=True,  null=True)
     phone = models.CharField(max_length=20, unique=True, blank=True,  null=True)
     photo = models.ImageField(upload_to="user/photo/", blank=True, null=True)
-    default_user = models.CharField(max_length=30, choices=UserDefault.choices, blank=True, null=True)
+    default_profile = models.CharField(max_length=30, choices=UserDefault.choices, blank=True, null=True)
     
     is_phone_verified = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
@@ -103,14 +106,60 @@ class Address(models.Model):
     object_id = models.PositiveIntegerField(blank=True, null=True)
     service = GenericForeignKey('profile_type', 'object_id')
 
-    address_line = models.TextField()
+    address_line = models.CharField(max_length=600, blank=True, null=True)
     city = models.CharField(max_length=100, blank=True, null=True)
     lat = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
     lng = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
     is_default = models.BooleanField(default=False)
 
+    @property
+    def get_address(self):
+        return f"{self.address_line}, {self.city}"
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            existing_addresses = Address.objects.filter(
+                user=self.user,
+                profile_type=self.profile_type,
+                object_id=self.object_id
+            ).exclude(pk=self.pk)
+            
+            if not self.pk and not existing_addresses.exists():
+                self.is_default = True
+
+            if self.is_default:
+                existing_addresses.update(is_default=False)
+
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        with transaction.atomic():
+            was_default = self.is_default
+            user = self.user
+            profile_type = self.profile_type
+            object_id = self.object_id
+            super().delete(*args, **kwargs)
+            if was_default:
+                next_address = Address.objects.filter(
+                    user=user,
+                    profile_type=profile_type,
+                    object_id=object_id
+                ).first()
+                if next_address:
+                    next_address.is_default = True
+                    next_address.save()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'profile_type', 'object_id'],
+                condition=Q(is_default=True),
+                name='unique_default_address_per_profile'
+            )
+        ]
+
     def __str__(self):
-        return f"{self.address_line} for {self.user}"
+        return f"{self.address_line} for {self.user} {self.profile_type}"
 
 # Payment Method Model=====================================
 class PaymentMethod(models.Model):
