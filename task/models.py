@@ -1,6 +1,6 @@
 from django.db import models
 from account.models import User, CustomerProfile, ServiceProviderProfile
-from find_worker_config.model_choice import ServiceTaskStatus, ServicePrototypeStatus, JobRequestStatus, OrderStatus, OrderRequestStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction
+from find_worker_config.model_choice import ServiceTaskStatus, ServicePrototypeStatus, JobRequestStatus, OrderStatus, OrderRequestStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus
 from django.db import transaction
 from django.contrib.contenttypes.fields import GenericRelation, GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -19,7 +19,7 @@ class ServiceCategory(models.Model):
         return self.title
 
 class ServiceSubCategory(models.Model):
-    category = models.ForeignKey(ServiceCategory, on_delete=models.CASCADE)
+    category = models.ForeignKey(ServiceCategory, on_delete=models.CASCADE, related_name="subcategory")
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     icon = models.CharField(max_length=20, blank=True, null=True)
@@ -31,15 +31,16 @@ class ServiceSubCategory(models.Model):
         return f"{self.title} of {self.category.title}"
 
 class Order(models.Model):
-    category = models.ForeignKey(ServiceCategory, on_delete=models.CASCADE)
-    customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name="orders_as_customer")
-    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="orders_as_provider", blank=True, null=True)
+    category = models.ForeignKey(ServiceCategory, on_delete=models.SET_NULL, related_name="orders", blank=True, null=True)
+    subcategory = models.ForeignKey(ServiceSubCategory, on_delete=models.SET_NULL, related_name="orders", blank=True, null=True)
+    customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, related_name="orders_as_customer", blank=True, null=True)
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, related_name="orders_as_provider", blank=True, null=True)
     
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     area = models.CharField(max_length=255)
-    lat = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
-    lng = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    lat = models.DecimalField(max_digits=25, decimal_places=20, blank=True, null=True)
+    lng = models.DecimalField(max_digits=25, decimal_places=20, blank=True, null=True)
     budget_min = models.DecimalField(max_digits=10, decimal_places=2)
     budget_max = models.DecimalField(max_digits=10, decimal_places=2)
 
@@ -105,6 +106,33 @@ class ReviewAndRating(models.Model):
     review = models.CharField(max_length=255, blank=True, null=True)
     created = models.DateTimeField(auto_now=True)
 
+class OrderRefundRequest(models.Model):
+    order = models.OneToOneField(Order, on_delete=models.SET_NULL, related_name="refund_request", blank=True, null=True)
+    customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, related_name="refund_requests", blank=True, null=True)
+    reason = models.TextField()
+    status = models.CharField(max_length=20, choices=RefundStatus.choices, default=RefundStatus.PENDING)
+    refund_amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    admin_note = models.TextField(blank=True, null=True)
+    processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="processed_refunds")
+    processed_at = models.DateTimeField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def save_order_data(self):
+        if not self.customer:
+            self.customer = self.order.customer
+        if not self.refund_amount:
+            self.refund_amount = self.order.amount
+        return True
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            self.save_order_data()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Refund for Order {self.order.id} | {self.status}"
 
 
 # ==========================================================================================
@@ -120,8 +148,6 @@ class AdminWallet(models.Model):
 
     def __str__(self):
         return f"Payment Balance: {self.payment_balance} | Current Balance: {self.current_balance} | Hold Balance: {self.hold_balance} | Total Withdraw: {self.total_withdraw}"
-
-
 
 
 class PaymentTransaction(models.Model):
@@ -156,8 +182,6 @@ class PaymentTransaction(models.Model):
             self.payment_id = self.generate_payment_id()
         return super().save(*args, **kwargs)
 
-    # def __str__(self):
-    #     return f"{self.amount} Doller Payment {self.user.first_name} For {self.action} | Payment Type {self.type}"
     def __str__(self):
         return f"{self.payment_id} | {self.amount} | {self.action}"
 

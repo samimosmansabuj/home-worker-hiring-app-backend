@@ -1,11 +1,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import ServiceCategoryViewSet, ReviewAndRatingViewSets, CustomerOrderViewSet, ProviderOrderViewSet, AdminOrderViewSet, PaymentTransactionViewSets
+from .views import ServiceCategoryViewSet, ServiceSubCategoryViewSet, ReviewAndRatingViewSets, CustomerOrderViewSet, ProviderOrderViewSet, AdminOrderViewSet, PaymentTransactionViewSets
 
 
 router = DefaultRouter()
 # For Categories Section-------
-router.register(r"categories", ServiceCategoryViewSet, basename="categories")
+router.register(r"category", ServiceCategoryViewSet, basename="category")
+router.register(r"sub-category", ServiceSubCategoryViewSet, basename="sub-category")
 # For Order Section--------
 router.register(r"customer/order", CustomerOrderViewSet, basename="customer_orders")
 router.register(r"provider/order", ProviderOrderViewSet, basename="provider_orders")

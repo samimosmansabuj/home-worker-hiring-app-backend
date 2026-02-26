@@ -1,13 +1,24 @@
-from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction
+from .models import ServiceCategory, ServiceSubCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction, ServiceSubCategory, OrderRefundRequest, OrderPaymentStatus
 from rest_framework import serializers
 from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, ReviewRatingChoice
 from account.models import User
 from django.shortcuts import get_object_or_404
 
+class ServiceSubCategorySerializer(serializers.ModelSerializer):
+    category = serializers.PrimaryKeyRelatedField(queryset=ServiceCategory.objects.all(), write_only=True)
+    class Meta:
+        model = ServiceSubCategory
+        fields = [ "id", "category", "title", "description", "icon", "is_active", "updated_at", "created_at"]
+
+
 class ServiceCategorySerializer(serializers.ModelSerializer):
+    subcategory = ServiceSubCategorySerializer(many=True, read_only=True)
     class Meta:
         model = ServiceCategory
-        fields = [ "id", "title", "description", "icon", "is_active", "updated_at", "created_at"]
+        fields = [ "id", "title", "description", "icon", "is_active", "updated_at", "created_at", "subcategory"]
+
+
+
 
 
 class OrderRequestSerializerForOrder(serializers.ModelSerializer):
@@ -68,14 +79,15 @@ class ReviewAndRatingSerializerForOrder(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     category = serializers.PrimaryKeyRelatedField(queryset=ServiceCategory.objects.all())
+    subcategory = serializers.PrimaryKeyRelatedField(queryset=ServiceSubCategory.objects.all(), required=False)
     order_requests = OrderRequestSerializerForOrder(many=True, read_only=True, source="order_requests.order_by")
     service_data = serializers.DateTimeField(required=True)
-    # order_review = ReviewAndRatingSerializerForOrder(read_only=True)
     order_review = serializers.PrimaryKeyRelatedField(read_only=True)
+    refund_request = serializers.PrimaryKeyRelatedField(read_only=True)
     class Meta:
         model = Order
         fields = "__all__"
-        read_only_fields = ("customer", "provider", "order_review")
+        read_only_fields = ("customer", "provider", "order_review", "refund_request")
     
     def validate(self, attrs):
         request = self.context.get("request")
@@ -124,6 +136,15 @@ class OrderSerializer(serializers.ModelSerializer):
             "description": instance.category.description,
             "icon": instance.category.icon
         }
+        if instance.subcategory:
+            subcategory = {
+                "id": instance.subcategory.id,
+                "title": instance.subcategory.title,
+                "description": instance.subcategory.description,
+                "icon": instance.subcategory.icon
+            }
+        else:
+            subcategory = None
         customer = build_user_profile(instance.customer.id, instance.customer.user)
         provider = build_user_profile(instance.provider.id, instance.provider.user) if instance.provider else None
 
@@ -132,6 +153,7 @@ class OrderSerializer(serializers.ModelSerializer):
         new_data = {
             "id": data["id"],
             "category": category,
+            "subcategory": subcategory or None,
             "customer": customer,
             "provider": provider,
             "title": data["title"],
@@ -184,6 +206,22 @@ class OrderSerializer(serializers.ModelSerializer):
             else:
                 new_data["order_review"] = order_review
 
+        refund_request = get_object_or_404(OrderRefundRequest, pk=data.get("refund_request")) if data.get("refund_request") else None
+        if instance.status in [OrderStatus.REFUND, OrderStatus.REFUND_REQUEST]:
+            if refund_request:
+                new_data["refund_request"] = {
+                    "id": refund_request.id,
+                    "reason": refund_request.reason,
+                    "status": refund_request.status,
+                    "refund_amount": refund_request.refund_amount,
+                    "admin_note": refund_request.admin_note,
+                    "processed_by": refund_request.processed_by,
+                    "processed_at": refund_request.processed_at,
+                    "created_at": refund_request.created_at,
+                    "updated_at": refund_request.updated_at,
+                }
+            else:
+                new_data["refund_request"] = refund_request
         return new_data
     
     def create(self, validated_data):
@@ -291,6 +329,27 @@ class ReviewAndRatingSerializer(serializers.ModelSerializer):
         attrs["provider"] = order.provider
         return attrs
 
+class OrderRefundRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderRefundRequest
+        fields = "__all__"
+        read_only_fields = ["customer", "order"]
+    
+    def validate(self, attrs):
+        order = self.context.get("order")
+
+        # Customer Check & Permission---------
+        request = self.context.get("request")
+        if order.customer != request.user.hasCustomerProfile:
+            raise Exception("You can't send refund request for this order!")
+
+        # Order Status Check & Error Handling
+        if order.status not in (OrderStatus.CONFIRM) and order.payment_status not in (OrderPaymentStatus.PAID):
+            raise Exception("This order isn't available for Refund Request!")
+        
+        attrs["order"] = order
+        attrs["customer"] = request.user.hasCustomerProfile
+        return attrs
 
 
 

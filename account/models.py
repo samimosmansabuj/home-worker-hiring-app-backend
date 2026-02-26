@@ -236,7 +236,8 @@ class ActivityLog(models.Model):
 
     def __str__(self):
         # return f"{self.user.username} {self.action} "
-        return f"{self.created_at} - {self.user.username} - {self.action}"
+        username = self.user.username if self.user else None
+        return f"{self.created_at} - {username} - {self.action}"
 
 # Site Settings Model========================================
 class SignUpSlider(models.Model):

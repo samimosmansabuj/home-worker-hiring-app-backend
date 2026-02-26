@@ -317,7 +317,11 @@ class UserInfoSerializer(serializers.ModelSerializer):
         
         address = Address.objects.filter(user=user, profile_type=profile_type, is_default=True).first()
         if address:
-            return f"{address.address_line} {address.city}"
+            # return f"{address.address_line} {address.city}"
+            return {
+                "id": address.id,
+                "display_address": f"{address.address_line} {address.city}"
+            }
         else:
             return None
 

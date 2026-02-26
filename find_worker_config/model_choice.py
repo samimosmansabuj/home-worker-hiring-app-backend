@@ -78,6 +78,7 @@ class OrderStatus(models.TextChoices):
     COMPLETED = "COMPLETED"
     PARTIAL_COMPLETE = "PARTIAL_COMPLETE"
     CANCELLED = "CANCELLED"
+    REFUND_REQUEST = "REFUND_REQUEST"
     REFUND = "REFUND"
 
 class OrderPaymentStatus(models.TextChoices):
@@ -93,25 +94,15 @@ class ReviewRatingChoice(models.IntegerChoices):
     THREE = 3
     FOUR = 4
     FIVE = 5
-    
 
-
-# For Order App=====================================================
-class OrderStatusOld(models.TextChoices):
-    CREATED = "CREATED"
-    CONFIRMED = "CONFIRMED"
-    PAID = "PAID"
-    IN_PROGRESS = "IN_PROGRESS"
-    COMPLETED = "COMPLETED"
-    CANCELLED = "CANCELLED"
+class RefundStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    APPROVED = "APPROVED", "Approved"
+    REJECTED = "REJECTED", "Rejected"
+    COMPLETED = "COMPLETED", "Completed"
 
 
 # For Wallet App===================================================
-class WalletTransactionType(models.TextChoices):
-    CREDIT = "CREDIT"
-    DEBIT = "DEBIT"
-    HOLD = "HOLD"
-
 class PaymentTransactionType(models.TextChoices):
     CREDIT = "CREDIT"
     DEBIT = "DEBIT"

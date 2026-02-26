@@ -1,7 +1,7 @@
 from django.shortcuts import render, get_object_or_404
-from .serializers import ServiceCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer, PaymentTransactionSerializer
+from .serializers import ServiceCategorySerializer, ServiceSubCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer, PaymentTransactionSerializer, OrderRefundRequestSerializer
 from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet, LogActivityModule
-from .models import ServiceCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction
+from .models import ServiceCategory, ServiceSubCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -26,13 +26,30 @@ class ServiceCategoryViewSet(UpdateModelViewSet):
 
     def perform_update(self, serializer):
         push_notify_role(
-            role=UserRole.CUSTOMER,
+            role=UserRole.ADMIN,
             data={
                 "type": "CATEGORY_UPDATE",
                 "message": "Category Updated!"
             }
         )
         return super().perform_update(serializer)
+
+class ServiceSubCategoryViewSet(UpdateModelViewSet):
+    queryset = ServiceSubCategory.objects.all()
+    serializer_class = ServiceSubCategorySerializer
+    permission_classes = [IsAdminWritePermissionOnly]
+
+    def perform_update(self, serializer):
+        push_notify_role(
+            role=UserRole.ADMIN,
+            data={
+                "type": "CATEGORY_UPDATE",
+                "message": "Sub Category Updated!"
+            }
+        )
+        return super().perform_update(serializer)
+
+
 
 class OrderRequestViewSets(UpdateModelViewSet):
     queryset = OrderRequest.objects.all()
@@ -93,9 +110,10 @@ class CustomerOrderViewSet(UpdateModelViewSet):
         log.create()
 
     def perform_create(self, serializer):
-        instance = serializer.save()
-        self.create_log("Create New Order", instance, for_notify=True)
-        return instance
+        with transaction.atomic():
+            instance = serializer.save()
+            self.create_log("Create New Order", instance, for_notify=True)
+            return instance
     
     def perform_update(self, serializer):
         instance = serializer.save()
@@ -306,6 +324,38 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                     {"status": False, "message": str(e)},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+
+    @action(detail=True, methods=["get", "post"], url_path="refund-request")
+    def send_refund_request(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                order = self.get_object()
+                serializer = OrderRefundRequestSerializer(data=request.data, context={"request": request, "order": order})
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                order.status = OrderStatus.REFUND_REQUEST
+                order.save()
+                self.create_log(
+                    "Refund Request Send", serializer.instance, for_notify=True,
+                    metadata={"reference_user_id": self.request.user.id, "reference_object_id": order.id, "reference_object_type": "Order"}
+                )
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Refund Request Send Successfully!"
+                    }, status=status.HTTP_200_OK
+                )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            return Response(
+                {"status": False, "message": error},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {"status": False, "message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
     def destroy(self, request, *args, **kwargs):
         try:
