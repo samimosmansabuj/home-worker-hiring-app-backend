@@ -2,7 +2,7 @@
 from rest_framework import status, exceptions
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
-from find_worker_config.model_choice import PaymentCurrencyType, PaymentTransactionType, ServiceChargeType
+from find_worker_config.model_choice import PaymentCurrencyType, PaymentTransactionType, ServiceChargeType, PaymentAction
 from task.models import PaymentTransaction, AdminWallet
 from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
@@ -233,12 +233,16 @@ class PaymentTransactionModule:
             wallet.payment_balance -= amount
             wallet.hold_balance += amount
         elif self.type == PaymentTransactionType.DEBIT:
-            charge_amount, payable_amount = self.get_service_charge_amount(amount)
-            transaction.amount = payable_amount
-            transaction.save(update_fields=["amount"])
-            wallet.hold_balance -= amount
-            wallet.total_withdraw += payable_amount
-            wallet.current_balance += charge_amount
+            if transaction.action == PaymentAction.SEND_PROVIDER:
+                charge_amount, payable_amount = self.get_service_charge_amount(amount)
+                transaction.amount = payable_amount
+                transaction.save(update_fields=["amount"])
+                wallet.hold_balance -= amount
+                wallet.total_withdraw += payable_amount
+                wallet.current_balance += charge_amount
+            elif transaction.action == PaymentAction.REFUND_CUSTOMER:
+                wallet.current_balance -= transaction.amount
+
         wallet.save(update_fields=[
             "payment_balance",
             "hold_balance",

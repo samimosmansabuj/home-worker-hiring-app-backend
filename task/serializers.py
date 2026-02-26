@@ -1,6 +1,6 @@
 from .models import ServiceCategory, ServiceSubCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction, ServiceSubCategory, OrderRefundRequest, OrderPaymentStatus
 from rest_framework import serializers
-from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, ReviewRatingChoice
+from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, ReviewRatingChoice, RefundStatus
 from account.models import User
 from django.shortcuts import get_object_or_404
 
@@ -215,7 +215,7 @@ class OrderSerializer(serializers.ModelSerializer):
                     "status": refund_request.status,
                     "refund_amount": refund_request.refund_amount,
                     "admin_note": refund_request.admin_note,
-                    "processed_by": refund_request.processed_by,
+                    "processed_by": refund_request.processed_by.username,
                     "processed_at": refund_request.processed_at,
                     "created_at": refund_request.created_at,
                     "updated_at": refund_request.updated_at,
@@ -350,6 +350,12 @@ class OrderRefundRequestSerializer(serializers.ModelSerializer):
         attrs["order"] = order
         attrs["customer"] = request.user.hasCustomerProfile
         return attrs
+
+class OrderRefundRequestActionSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=RefundStatus.choices, required=True)
+    admin_note = serializers.CharField(required=False)
+    amount = serializers.FloatField(required=False)
+    trnx_id = serializers.CharField(required=False)
 
 
 

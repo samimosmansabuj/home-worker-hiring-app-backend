@@ -1,7 +1,7 @@
 from django.shortcuts import render, get_object_or_404
-from .serializers import ServiceCategorySerializer, ServiceSubCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer, PaymentTransactionSerializer, OrderRefundRequestSerializer
+from .serializers import ServiceCategorySerializer, ServiceSubCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer, PaymentTransactionSerializer, OrderRefundRequestSerializer, OrderRefundRequestActionSerializer
 from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet, LogActivityModule
-from .models import ServiceCategory, ServiceSubCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction
+from .models import ServiceCategory, ServiceSubCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction, OrderRefundRequest
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -9,7 +9,7 @@ from rest_framework import status, viewsets
 from rest_framework.exceptions import ValidationError, PermissionDenied
 from find_worker_config.permissions import ForProviderProfile, IsAdminWritePermissionOnly, HasCustomerProfileSafeModeTypeHeader, ForCustomerProfile, ForAdminProfile
 from chat_notify.utils import push_notify_all, push_notify_role, push_notification
-from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, OrderRequestStatus, OrderPaymentStatus, PaymentTransactionType, PaymentAction
+from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, OrderRequestStatus, OrderPaymentStatus, PaymentTransactionType, PaymentAction, RefundStatus
 from django.db.models import Q
 from rest_framework import views
 from .services import OrderService
@@ -18,6 +18,7 @@ from django.contrib.contenttypes.models import ContentType
 from account.utils import generate_otp
 from account.models import ServiceProviderProfile
 from django.db.models import Q
+from django.utils import timezone
 
 class ServiceCategoryViewSet(UpdateModelViewSet):
     queryset = ServiceCategory.objects.all()
@@ -802,6 +803,86 @@ class PaymentTransactionViewSets(UpdateReadOnlyModelViewSet):
         else:
             raise Exception("Payment transaction not get for the user.")
         return pt
+
+class OrderRefundViewSets(UpdateReadOnlyModelViewSet):
+    queryset = OrderRefundRequest.objects.all()
+    serializer_class = OrderRefundRequestSerializer
+    permission_classes = [ForAdminProfile]
+
+    def create_log(self, action, entity=None, for_notify=False, user=None, metadata={}):
+        data = {
+            "user": user or self.request.user,
+            "action": action,
+            "entity": entity,
+            "request": self.request,
+            "for_notify": for_notify,
+            "metadata": metadata,
+        }
+        log = LogActivityModule(data)
+        log.create()
+
+    @action(detail=True, methods=["post"], url_path="action")
+    def method_admin_action(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                refund_object = self.get_object()
+
+                serializer = OrderRefundRequestActionSerializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                refund_status = serializer.validated_data["status"]
+                admin_note = serializer.validated_data["admin_note"]
+
+                if refund_status in [RefundStatus.APPROVED, RefundStatus.REJECTED]:
+                    refund_object.status = refund_status
+                    refund_object.processed_by = request.user
+                    refund_object.processed_at = timezone.now()
+                elif refund_status == RefundStatus.COMPLETED and refund_object.status not in [RefundStatus.PENDING, RefundStatus.REJECTED]:
+                    trnx_id = serializer.validated_data.get("trnx_id" or None)
+                    amount = serializer.validated_data.get("amount" or None)
+                    if amount and refund_object.amount != amount:
+                        raise Exception("Order Amount not same!")
+                    elif trnx_id:
+                        raise Exception("Transaction ID must be submited.")
+                    refund_object.status = refund_status
+                    refund_object.processed_by = request.user
+                    refund_object.processed_at = timezone.now()
+                    # Payment Transaction----
+                    payment = PaymentTransactionModule(
+                        user=refund_object.customer.user,
+                        amount=amount,
+                        reference_object=refund_object,
+                        type=PaymentTransactionType.DEBIT,
+                        action=PaymentAction.REFUND_CUSTOMER
+                    )
+                    payment.payment_transaction()
+
+
+                # if refund_object.status == RefundStatus.PENDING and refund_status != RefundStatus.PENDING:
+                    refund_object.admin_note = admin_note
+                
+                refund_object.save()
+                return Response(
+                    {
+                        "status": True,
+                        "message": f"Refund Status Update at {refund_status}"
+                    }, status=status.HTTP_200_OK
+                )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
 
 # =================== Payment transaction Section Start===================================
 # ==========================================================================================
