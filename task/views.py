@@ -831,35 +831,52 @@ class OrderRefundViewSets(UpdateReadOnlyModelViewSet):
                 serializer.is_valid(raise_exception=True)
                 refund_status = serializer.validated_data["status"]
                 admin_note = serializer.validated_data["admin_note"]
-
+                
+                if refund_object.status == refund_status:
+                    raise Exception(f"Order is already at {refund_object.status}")
                 if refund_status in [RefundStatus.APPROVED, RefundStatus.REJECTED]:
+                    # Refund Object Update----
                     refund_object.status = refund_status
                     refund_object.processed_by = request.user
                     refund_object.processed_at = timezone.now()
-                elif refund_status == RefundStatus.COMPLETED and refund_object.status not in [RefundStatus.PENDING, RefundStatus.REJECTED]:
+                    self.create_log(
+                        f"Refund {refund_status}", entity=refund_object, for_notify=True, user=refund_object.customer.user,
+                        metadata={"reference_object_id": refund_object.order.id, "reference_object_type": "Order"}
+                    )
+                elif refund_status == RefundStatus.COMPLETED and refund_object.status == RefundStatus.APPROVED:
                     trnx_id = serializer.validated_data.get("trnx_id" or None)
                     amount = serializer.validated_data.get("amount" or None)
-                    if amount and refund_object.amount != amount:
+                    if amount and refund_object.refund_amount != amount:
                         raise Exception("Order Amount not same!")
-                    elif trnx_id:
+                    if not trnx_id:
                         raise Exception("Transaction ID must be submited.")
+                    # Refund Object Update----
                     refund_object.status = refund_status
                     refund_object.processed_by = request.user
                     refund_object.processed_at = timezone.now()
+                    order = refund_object.order
+                    # Order Object Update----
+                    order.status = OrderStatus.REFUND
+                    order.payment_status = OrderPaymentStatus.REFUND
+                    order.save()
                     # Payment Transaction----
                     payment = PaymentTransactionModule(
                         user=refund_object.customer.user,
-                        amount=amount,
+                        amount=refund_object.refund_amount,
                         reference_object=refund_object,
                         type=PaymentTransactionType.DEBIT,
                         action=PaymentAction.REFUND_CUSTOMER
                     )
                     payment.payment_transaction()
-
-
-                # if refund_object.status == RefundStatus.PENDING and refund_status != RefundStatus.PENDING:
-                    refund_object.admin_note = admin_note
+                    self.create_log(
+                        f"Refund {refund_status}", entity=refund_object, for_notify=True, user=refund_object.customer.user,
+                        metadata={"reference_object_id": refund_object.order.id, "reference_object_type": "Order"}
+                    )
+                else:
+                    raise Exception(f"Your order is {refund_object.status} and can't update right now!")
                 
+                if admin_note:
+                    refund_object.admin_note = admin_note
                 refund_object.save()
                 return Response(
                     {

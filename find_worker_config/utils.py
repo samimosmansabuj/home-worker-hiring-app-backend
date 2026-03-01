@@ -241,7 +241,7 @@ class PaymentTransactionModule:
                 wallet.total_withdraw += payable_amount
                 wallet.current_balance += charge_amount
             elif transaction.action == PaymentAction.REFUND_CUSTOMER:
-                wallet.current_balance -= transaction.amount
+                wallet.payment_balance -= transaction.amount
 
         wallet.save(update_fields=[
             "payment_balance",
