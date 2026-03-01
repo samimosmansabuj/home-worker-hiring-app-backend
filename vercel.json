@@ -1,0 +1,14 @@
+{
+  "builds": [
+    {
+      "src": "find_worker_config/wsgi.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "find_worker_config/wsgi.py"
+    }
+  ]
+}
