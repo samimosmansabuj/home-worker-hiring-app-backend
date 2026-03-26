@@ -23,8 +23,8 @@ urlpatterns = [
     path("auth/password/reset/", PasswordResetRequestView.as_view(), name="password-reset"),
     path("auth/password/reset-confirm/", PasswordResetConfirmView.as_view(), name="password-confirm"),
     # User Registration Route---------------
-    path("signup/otp/request/", SignUpOTPRequestView.as_view(), name="signup_otp_send"),
-    path("signup/otp/verify/", SignUpOTPVerifyView.as_view(), name="signup_otp_verify"),
+    # path("signup/otp/request/", SignUpOTPRequestView.as_view(), name="signup_otp_send"),
+    # path("signup/otp/verify/", SignUpOTPVerifyView.as_view(), name="signup_otp_verify"),
     path("auth/signup/", SignUpViews.as_view(), name="signup"),
     path("auth/signup/verify/", UserSignUpOTPVerifyView.as_view(), name="signup-verify"),
 
@@ -42,3 +42,4 @@ urlpatterns = [
     path("site/", include(site_router.urls)),
     path("site/admin-wallet/", AdminWalletViews.as_view(), name="admin=wallet")
 ]
+

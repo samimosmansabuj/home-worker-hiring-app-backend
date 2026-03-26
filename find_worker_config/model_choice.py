@@ -40,6 +40,10 @@ class DocumentStatus(models.TextChoices):
     REVIEW = "REVIEW"
     FAILED = "FAILED"
     REJECTED = "REJECTED"
+
+class VOUCHER_TYPE(models.TextChoices):
+    PERCENTAGE = "PERCENTAGE"
+    FLAT = "FLAT"
     
 
 # For Task App===================================================

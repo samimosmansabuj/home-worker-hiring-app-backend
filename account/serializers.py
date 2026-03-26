@@ -123,15 +123,16 @@ class SignUpOTPVerifySerializer(serializers.Serializer):
         }
 
 class SignupSerializer(serializers.ModelSerializer):
-    # address = serializers.CharField(write_only=True)
+    address = serializers.JSONField(write_only=True)
     password = serializers.CharField(write_only=True)
     first_name = serializers.CharField(required=True)
     last_name = serializers.CharField(required=True)
     email = serializers.EmailField(required=True)
     phone = serializers.CharField(required=True)
+
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "email", "phone", "password"]
+        fields = ["first_name", "last_name", "email", "phone", "password", "address"]
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
@@ -143,18 +144,24 @@ class SignupSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Phone already exists")
         return value
     
+    def create_address(self, user, address_data):
+        return Address.objects.create(
+            user=user,
+            address_line=address_data.get("address_line"),
+            city=address_data.get("city"),
+            lat=address_data.get("lat"),
+            lng=address_data.get("lng"),
+            is_default=True
+        )
+    
     def create(self, validated_data):
-        # address_text = validated_data.pop("address")
+        address_data = validated_data.pop("address")
         password = validated_data.pop("password")
 
         user = User(**validated_data)
         user.set_password(password)
         user.save()
-        # Address.objects.create(
-        #     user=user,
-        #     address_line=address_text,
-        #     is_default=True
-        # )
+        self.create_address(user, address_data)
         self.user = user
         return user
     
@@ -306,21 +313,35 @@ class UserInfoSerializer(serializers.ModelSerializer):
         else:
             return None
     
-    def get_user_profile_address(self, email, user_mode):
-        user = User.objects.get(email=email)
+    def get_user_profile_address(self, user, user_mode):
         if user_mode == UserDefault.CUSTOMER:
             profile_type = ContentType.objects.get_for_model(user.customer_profile)
+            address_objects = Address.objects.filter(
+                user=user, profile_type=profile_type, is_default=True
+            )
         elif user_mode == UserDefault.PROVIDER:
             profile_type = ContentType.objects.get_for_model(user.service_provider_profile)
+            address_objects = Address.objects.filter(
+                user=user, profile_type=profile_type, is_default=True
+            )
         else:
-            return None
+            address_objects = Address.objects.filter(
+                user=user, is_default=True
+            )
         
-        address = Address.objects.filter(user=user, profile_type=profile_type, is_default=True).first()
+        if address_objects:
+            address = address_objects.first()
+        elif Address.objects.filter(user=user, is_default=True).exists():
+            address = Address.objects.filter(user=user, is_default=True).first()
+        elif Address.objects.filter(user=user).exists():
+            address = Address.objects.filter(user=user)
+        
         if address:
-            # return f"{address.address_line} {address.city}"
             return {
                 "id": address.id,
-                "display_address": f"{address.address_line} {address.city}"
+                "display_address": f"{address.address_line} {address.city}",
+                "lat": address.lat,
+                "lng": address.lng
             }
         else:
             return None
@@ -329,9 +350,9 @@ class UserInfoSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         user_mode = self.context.get("user_mode")
         request = self.context.get("request")
+
         data["photo"] = self.get_photo_url(data.get("photo"), request)
-        address = self.get_user_profile_address(data.get("email"), user_mode)
-        data["address"] = address
+        data["address"] = self.get_user_profile_address(request.user, user_mode)
 
         if user_mode == UserDefault.CUSTOMER:
             data.pop("service_provider_profile")

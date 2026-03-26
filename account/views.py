@@ -740,14 +740,14 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
             profile, _ = CustomerProfile.objects.get_or_create(user=user)
             if not ServiceProviderProfile.objects.filter(user=user).exists() and not user.default_profile:
                 user.default_profile = UserDefault.CUSTOMER
-            return profile
         elif user_mode == UserDefault.PROVIDER:
             profile, _ = ServiceProviderProfile.objects.get_or_create(user=user)
             if not CustomerProfile.objects.filter(user=user).exists() and not user.default_profile:
                 user.default_profile = UserDefault.PROVIDER
-            return profile
         else:
             return None
+        user.save(update_fields=["default_profile"])
+        return profile
     
     def retrieve(self, request, *args, **kwargs):
         user_mode = request.query_params.get("user_mode")
@@ -767,7 +767,11 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
                 self.get_user_mode_profile(user_mode)
                 partial = kwargs.pop('partial', False)
                 instance = self.get_object()
-                serializer = UserInfoSerializer(instance, data=request.data, partial=partial, context={"user_mode": user_mode, "request": request})
+                serializer = UserInfoSerializer(
+                    instance, data=request.data, partial=partial, context={
+                        "user_mode": user_mode, "request": request
+                    }
+                )
                 serializer.is_valid(raise_exception=True)
                 self.perform_update(serializer)
 
@@ -813,6 +817,7 @@ class UserAddressViews(UpdateModelViewSet):
     def get_queryset(self):
         user_mode = self.request.query_params.get("user_mode")
         user = self.get_user()
+
         if self.request.user.role == UserRole.USER:
             if user_mode == UserDefault.PROVIDER:
                 profile_type = ContentType.objects.get_for_model(user.service_provider_profile)
@@ -822,7 +827,12 @@ class UserAddressViews(UpdateModelViewSet):
                 address = Address.objects.filter(user=user, profile_type=profile_type)
             else:
                 raise Exception("No Profile Mode Setup.")
-            return address
+            
+            if address:
+                return address
+            else:
+                return Address.objects.filter(user=user)
+
         elif self.request.user.role in (UserRole.ADMIN):
             return Address.objects.all()
         raise Exception("Wrong user!")

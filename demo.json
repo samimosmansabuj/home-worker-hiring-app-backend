@@ -1,0 +1,44 @@
+// Sing up json format---------
+{
+    "first_name": "Samim",
+    "last_name": "Samim",
+    "email": "samim@gmail.com",
+    "phone": "01788998899",
+    "password": "samim",
+    "address": {
+        "address_line": "AGB Colony, Motijheel",
+        "city": "dhaka",
+        "lat": "852222220",
+        "lng": "896663002"
+    }
+}
+
+// Sign Up OTP Verify-------------
+{
+    "email": "samim@gmail.com",
+    "otp": "112233"
+}
+
+
+// Current User Provider Info Update------------
+{
+    // "photo": "picture",
+    "first_name": "first name",
+    "last_name": "last name",
+    "language": "en",
+
+    "company_name": "Safa World",
+    // "logo": "logo",
+    "service_category": [1, 2],
+    // "profile": "PROVIDER"
+}
+
+// Current User Customer Info Update------------
+{
+    // "photo": "picture",
+    "first_name": "first name",
+    "last_name": "last name",
+    "language": "en",
+}
+
+

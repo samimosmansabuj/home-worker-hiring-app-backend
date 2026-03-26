@@ -3,12 +3,14 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Q
-from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, OTPType, UserDefault, DocumentType, DocumentStatus
+from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_TYPE
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from .utils import generate_otp, image_delete_os, previous_image_delete_os
 from django.db import transaction
+import random
+import string
 
 
 # Custom User Model====================================
@@ -27,6 +29,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     status = models.CharField(max_length=30, choices=UserStatus.choices, default=UserStatus.ACTIVE)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    referral_code = models.CharField(max_length=50, unique=True, blank=True, null=True, editable=False)
 
     language = models.CharField(max_length=10, choices=UserLanguage.choices, default=UserLanguage.EN)
     date_joined = models.DateTimeField(auto_now_add=True)
@@ -39,11 +42,17 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     @property
     def hasCustomerProfile(self):
-        return self.customer_profile or None
+        try:
+            return self.customer_profile
+        except:
+            return None
     
     @property
     def hasServiceProviderProfile(self):
-        return self.service_provider_profile or None
+        try:
+            return self.service_provider_profile
+        except:
+            return None
     
     def image_update(self, instance):
         previous_image_delete_os(instance.photo, self.photo)
@@ -67,15 +76,25 @@ class User(AbstractBaseUser, PermissionsMixin):
             raise ValueError("Cannot generate username")
         return username.lower()
 
+    def generate_referral_code(self):
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        while User.objects.filter(referral_code=code).exists():
+            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        return code
+
     def save(self, *args, **kwargs):
         if self.pk and User.objects.filter(pk=self.pk).exists():
             instance = User.objects.get(pk=self.pk)
             self.image_update(instance)
+        
         if not self.username: self.username = self.generate_username()
+        if not self.referral_code: self.referral_code = self.generate_referral_code()
+
         return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.username} ({self.role})"
+
 
 # Customer User Profile==================================
 class CustomerProfile(models.Model):
@@ -86,6 +105,7 @@ class CustomerProfile(models.Model):
     def __str__(self):
         return f"{self.user.username} - Customer Profile"
 
+
 # Service Provider Profile================================
 class ServiceProviderProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="service_provider_profile")
@@ -93,11 +113,12 @@ class ServiceProviderProfile(models.Model):
     logo = models.ImageField(upload_to="provider/logo/", blank=True, null=True)
     rating = models.FloatField(default=0)
     total_jobs = models.PositiveIntegerField(default=0)
-    service_category = models.ManyToManyField("task.ServiceCategory", blank=True, null=True)
+    service_category = models.ManyToManyField("task.ServiceCategory", blank=True)
     is_verified = models.BooleanField(default=False)
     
     def __str__(self):
         return f"{self.user.username} - Provider Profile"
+
 
 # Address Model===========================================
 class Address(models.Model):
@@ -108,8 +129,8 @@ class Address(models.Model):
 
     address_line = models.CharField(max_length=600, blank=True, null=True)
     city = models.CharField(max_length=100, blank=True, null=True)
-    lat = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
-    lng = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    lat = models.FloatField(max_length=9, blank=True, null=True)
+    lng = models.FloatField(max_length=9, blank=True, null=True)
     is_default = models.BooleanField(default=False)
 
     @property
@@ -160,6 +181,7 @@ class Address(models.Model):
 
     def __str__(self):
         return f"{self.address_line} for {self.user} {self.profile_type}"
+
 
 # Payment Method Model=====================================
 class PaymentMethod(models.Model):
@@ -220,8 +242,6 @@ class ProviderVerification(models.Model):
         return f"{self.provider.user.first_name} {self.provider.user.last_name} Provider Profile is Verified: {self.is_verified}"
 
 
-
-
 # Logs Model==============================================
 class ActivityLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
@@ -238,6 +258,7 @@ class ActivityLog(models.Model):
         # return f"{self.user.username} {self.action} "
         username = self.user.username if self.user else None
         return f"{self.created_at} - {username} - {self.action}"
+
 
 # Site Settings Model========================================
 class SignUpSlider(models.Model):
@@ -282,4 +303,27 @@ class CustomerScreenSlide(models.Model):
         
         return super().save(*args, **kwargs)
 
+
+
+# Referral & Vouchar Model========================================
+class Referral(models.Model):
+    referrer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='referrer')
+    referred = models.OneToOneField(User, on_delete=models.CASCADE, related_name='referred')
+    code = models.CharField(max_length=50)
+    reward_given = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class Voucher(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="vouchers")
+    code = models.CharField(max_length=50, unique=True)
+    type = models.CharField(max_length=20, choices=VOUCHER_TYPE.choices, default=VOUCHER_TYPE.PERCENTAGE)
+    value = models.DecimalField(max_digits=10, decimal_places=2)
+
+    minimum_value = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    upto_value = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+
+    is_used = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    expiry_date = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
 
