@@ -803,36 +803,10 @@ class UserAddressViews(UpdateModelViewSet):
     def get_user(self):
         return self.request.user
 
-    def get_user_mode_profile(self, user_mode):
-        user = self.get_user()
-        if user_mode == UserDefault.CUSTOMER:
-            profile, _ = CustomerProfile.objects.get_or_create(user=user)
-            return profile
-        elif user_mode == UserDefault.PROVIDER:
-            profile, _ = ServiceProviderProfile.objects.get_or_create(user=user)
-            return profile
-        else:
-            raise Exception("No Profile Mode Setup.")
-
     def get_queryset(self):
-        user_mode = self.request.query_params.get("user_mode")
         user = self.get_user()
-
         if self.request.user.role == UserRole.USER:
-            if user_mode == UserDefault.PROVIDER:
-                profile_type = ContentType.objects.get_for_model(user.service_provider_profile)
-                address = Address.objects.filter(user=user, profile_type=profile_type)
-            elif user_mode == UserDefault.CUSTOMER:
-                profile_type = ContentType.objects.get_for_model(user.customer_profile)
-                address = Address.objects.filter(user=user, profile_type=profile_type)
-            else:
-                raise Exception("No Profile Mode Setup.")
-            
-            if address:
-                return address
-            else:
-                return Address.objects.filter(user=user)
-
+            return Address.objects.filter(user=user)
         elif self.request.user.role in (UserRole.ADMIN):
             return Address.objects.all()
         raise Exception("Wrong user!")
@@ -867,16 +841,12 @@ class UserAddressViews(UpdateModelViewSet):
         log.create()
 
     def perform_create(self, serializer):
-        user_mode = self.request.query_params.get("user_mode")
-        profile = self.get_user_mode_profile(user_mode)
-        address_serializer = serializer.save(profile_type=ContentType.objects.get_for_model(profile), object_id=profile.id)
+        address_serializer = serializer.save()
         self.create_log(address_serializer, "Add new address")
         return address_serializer
     
     def perform_update(self, serializer):
-        user_mode = self.request.query_params.get("user_mode")
-        profile = self.get_user_mode_profile(user_mode)
-        address_serializer = serializer.save(profile_type=ContentType.objects.get_for_model(profile), object_id=profile.id)
+        address_serializer = serializer.save()
         self.create_log(address_serializer, "Update address")
         return address_serializer
 

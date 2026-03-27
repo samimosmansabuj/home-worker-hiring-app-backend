@@ -3,7 +3,7 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Q
-from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_TYPE
+from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -123,10 +123,6 @@ class ServiceProviderProfile(models.Model):
 # Address Model===========================================
 class Address(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="addresses")
-    profile_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, blank=True, null=True)
-    object_id = models.PositiveIntegerField(blank=True, null=True)
-    service = GenericForeignKey('profile_type', 'object_id')
-
     address_line = models.CharField(max_length=600, blank=True, null=True)
     city = models.CharField(max_length=100, blank=True, null=True)
     lat = models.FloatField(max_length=9, blank=True, null=True)
@@ -137,50 +133,44 @@ class Address(models.Model):
     def get_address(self):
         return f"{self.address_line}, {self.city}"
 
-    def save(self, *args, **kwargs):
-        with transaction.atomic():
-            existing_addresses = Address.objects.filter(
-                user=self.user,
-                profile_type=self.profile_type,
-                object_id=self.object_id
-            ).exclude(pk=self.pk)
+    # def save(self, *args, **kwargs):
+    #     with transaction.atomic():
+    #         existing_addresses = Address.objects.filter(
+    #             user=self.user
+    #         ).exclude(pk=self.pk)
             
-            if not self.pk and not existing_addresses.exists():
-                self.is_default = True
+    #         if not self.pk and not existing_addresses.exists():
+    #             self.is_default = True
 
-            if self.is_default:
-                existing_addresses.update(is_default=False)
+    #         if self.is_default:
+    #             existing_addresses.update(is_default=False)
 
-            super().save(*args, **kwargs)
+    #         super().save(*args, **kwargs)
 
-    def delete(self, *args, **kwargs):
-        with transaction.atomic():
-            was_default = self.is_default
-            user = self.user
-            profile_type = self.profile_type
-            object_id = self.object_id
-            super().delete(*args, **kwargs)
-            if was_default:
-                next_address = Address.objects.filter(
-                    user=user,
-                    profile_type=profile_type,
-                    object_id=object_id
-                ).first()
-                if next_address:
-                    next_address.is_default = True
-                    next_address.save()
+    # def delete(self, *args, **kwargs):
+    #     with transaction.atomic():
+    #         was_default = self.is_default
+    #         user = self.user
+    #         super().delete(*args, **kwargs)
+    #         if was_default:
+    #             next_address = Address.objects.filter(
+    #                 user=user,
+    #             ).first()
+    #             if next_address:
+    #                 next_address.is_default = True
+    #                 next_address.save()
 
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=['user', 'profile_type', 'object_id'],
-                condition=Q(is_default=True),
-                name='unique_default_address_per_profile'
-            )
-        ]
+    # class Meta:
+    #     constraints = [
+    #         models.UniqueConstraint(
+    #             fields=['user'],
+    #             condition=Q(is_default=True),
+    #             name='unique_default_address_per_profile'
+    #         )
+    #     ]
 
     def __str__(self):
-        return f"{self.address_line} for {self.user} {self.profile_type}"
+        return f"{self.address_line} for {self.user}"
 
 
 # Payment Method Model=====================================
@@ -314,9 +304,11 @@ class Referral(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Voucher(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="vouchers")
-    code = models.CharField(max_length=50, unique=True)
-    type = models.CharField(max_length=20, choices=VOUCHER_TYPE.choices, default=VOUCHER_TYPE.PERCENTAGE)
+    voucher_type = models.CharField(max_length=20, choices=VOUCHER_TYPE.choices, default=VOUCHER_TYPE.FOR_GLOBAL)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="vouchers", blank=True, null=True)
+    name = models.CharField(max_length=100, blank=True, null=True, default="DISCOUNT VOUCHER")
+    code = models.CharField(max_length=50)
+    discount_type = models.CharField(max_length=20, choices=VOUCHER_DISCOUNT_TYPE.choices, default=VOUCHER_DISCOUNT_TYPE.PERCENTAGE)
     value = models.DecimalField(max_digits=10, decimal_places=2)
 
     minimum_value = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
@@ -326,4 +318,14 @@ class Voucher(models.Model):
     is_active = models.BooleanField(default=True)
     expiry_date = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def generate_redeem_code(self):
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        while Voucher.objects.filter(code=code).exists():
+            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        return code
+
+    def save(self, *args, **kwargs):
+        if not self.code: self.code = self.generate_redeem_code()
+        return super().save(*args, **kwargs)
 

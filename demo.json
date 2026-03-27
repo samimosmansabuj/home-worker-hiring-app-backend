@@ -10,7 +10,8 @@
         "city": "dhaka",
         "lat": "852222220",
         "lng": "896663002"
-    }
+    },
+    "referral_code": "SAMIM4586" // Option
 }
 
 // Sign Up OTP Verify-------------

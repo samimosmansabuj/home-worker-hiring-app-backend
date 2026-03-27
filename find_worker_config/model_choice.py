@@ -41,9 +41,13 @@ class DocumentStatus(models.TextChoices):
     FAILED = "FAILED"
     REJECTED = "REJECTED"
 
-class VOUCHER_TYPE(models.TextChoices):
+class VOUCHER_DISCOUNT_TYPE(models.TextChoices):
     PERCENTAGE = "PERCENTAGE"
     FLAT = "FLAT"
+
+class VOUCHER_TYPE(models.TextChoices):
+    FOR_USER = "FOR_USER"
+    FOR_GLOBAL = "FOR_GLOBAL"
     
 
 # For Task App===================================================

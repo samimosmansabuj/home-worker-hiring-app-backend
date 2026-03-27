@@ -2,9 +2,9 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification
+from .models import User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification, Referral, Voucher
 from .utils import generate_otp
-from find_worker_config.model_choice import OTPType
+from find_worker_config.model_choice import OTPType, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
 from django.core.exceptions import ObjectDoesNotExist
 from find_worker_config.model_choice import UserRole, UserDefault
 from django.contrib.auth import get_user_model
@@ -12,6 +12,9 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.contrib.contenttypes.models import ContentType
+from django.db import transaction
+from django.utils import timezone
+from datetime import timedelta
 
 # OAuth2 imports
 from google.oauth2 import id_token
@@ -129,10 +132,11 @@ class SignupSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(required=True)
     email = serializers.EmailField(required=True)
     phone = serializers.CharField(required=True)
+    referral_code = serializers.CharField(required=False)
 
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "email", "phone", "password", "address"]
+        fields = ["first_name", "last_name", "email", "phone", "password", "address", "referral_code"]
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
@@ -154,16 +158,46 @@ class SignupSerializer(serializers.ModelSerializer):
             is_default=True
         )
     
-    def create(self, validated_data):
-        address_data = validated_data.pop("address")
-        password = validated_data.pop("password")
+    def create_referral_object(self, user, referral_code):
+        new_user_voucher_value = 10
+        if referral_code:
+            new_user_voucher_value = 15
+            referrer_user = User.objects.get(
+                referral_code=referral_code
+            )
+            Referral.objects.create(
+                referrer=referrer_user,
+                referred=user,
+                code=referral_code,
+                reward_given=False
+            )
+        return Voucher.objects.create(
+            voucher_type=VOUCHER_TYPE.FOR_USER,
+            user=user,
+            name="NEW USER VOUCHER",
+            code="NEWUSER100",
+            discount_type=VOUCHER_DISCOUNT_TYPE.PERCENTAGE,
+            value=new_user_voucher_value,
+            minimum_value=100,
+            upto_value=15,
+            is_used=False,
+            is_active=True,
+            expiry_date=timezone.now() + timedelta(days=30)
+        )
 
-        user = User(**validated_data)
-        user.set_password(password)
-        user.save()
-        self.create_address(user, address_data)
-        self.user = user
-        return user
+    def create(self, validated_data):
+        with transaction.atomic():
+            address_data = validated_data.pop("address")
+            password = validated_data.pop("password")
+            referral_code = validated_data.pop("referral_code", None)
+
+            user = User(**validated_data)
+            user.set_password(password)
+            user.save()
+            self.create_address(user, address_data)
+            self.create_referral_object(user, referral_code)
+            self.user = user
+            return user
     
     def send_code(self):
         otp = OTP.objects.create(
@@ -268,10 +302,10 @@ class ChangePasswordSerializer(serializers.Serializer):
 # User Info Current ===========================
 class UserAddressSerializer(serializers.ModelSerializer):
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
-
+    
     class Meta:
         model = Address
-        exclude = ("profile_type", "object_id")
+        fields = "__all__"
 
 # ---------main---------
 class ServiceCategoryField(serializers.ListField):
@@ -314,25 +348,12 @@ class UserInfoSerializer(serializers.ModelSerializer):
             return None
     
     def get_user_profile_address(self, user, user_mode):
-        if user_mode == UserDefault.CUSTOMER:
-            profile_type = ContentType.objects.get_for_model(user.customer_profile)
-            address_objects = Address.objects.filter(
-                user=user, profile_type=profile_type, is_default=True
-            )
-        elif user_mode == UserDefault.PROVIDER:
-            profile_type = ContentType.objects.get_for_model(user.service_provider_profile)
-            address_objects = Address.objects.filter(
-                user=user, profile_type=profile_type, is_default=True
-            )
-        else:
-            address_objects = Address.objects.filter(
-                user=user, is_default=True
-            )
+        address_objects = Address.objects.filter(
+            user=user, is_default=True
+        )
         
         if address_objects:
             address = address_objects.first()
-        elif Address.objects.filter(user=user, is_default=True).exists():
-            address = Address.objects.filter(user=user, is_default=True).first()
         elif Address.objects.filter(user=user).exists():
             address = Address.objects.filter(user=user)
         
