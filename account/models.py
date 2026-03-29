@@ -27,6 +27,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_phone_verified = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
     status = models.CharField(max_length=30, choices=UserStatus.choices, default=UserStatus.ACTIVE)
+    helper_profile_status = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     referral_code = models.CharField(max_length=50, unique=True, blank=True, null=True, editable=False)
@@ -105,7 +106,6 @@ class CustomerProfile(models.Model):
     def __str__(self):
         return f"{self.user.username} - Customer Profile"
 
-
 # Service Provider Profile================================
 class ServiceProviderProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="service_provider_profile")
@@ -114,6 +114,8 @@ class ServiceProviderProfile(models.Model):
     rating = models.FloatField(default=0)
     total_jobs = models.PositiveIntegerField(default=0)
     service_category = models.ManyToManyField("task.ServiceCategory", blank=True)
+    service_subcategory = models.ManyToManyField("task.ServiceSubCategory", blank=True)
+    office_location = models.ForeignKey("account.Address", on_delete=models.DO_NOTHING, blank=True, null=True)
     is_verified = models.BooleanField(default=False)
     
     def __str__(self):
@@ -133,41 +135,37 @@ class Address(models.Model):
     def get_address(self):
         return f"{self.address_line}, {self.city}"
 
-    # def save(self, *args, **kwargs):
-    #     with transaction.atomic():
-    #         existing_addresses = Address.objects.filter(
-    #             user=self.user
-    #         ).exclude(pk=self.pk)
-            
-    #         if not self.pk and not existing_addresses.exists():
-    #             self.is_default = True
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            if self.is_default:
+                Address.objects.filter(user=self.user).exclude(pk=self.pk).update(is_default=False)
+            elif not Address.objects.filter(user=self.user, is_default=True).exclude(pk=self.pk).exists():
+                self.is_default = True
+            super().save(*args, **kwargs)
 
-    #         if self.is_default:
-    #             existing_addresses.update(is_default=False)
+    def __str__(self):
+        return f"{self.address_line} for {self.user}"
+    
+    def delete(self, *args, **kwargs):
+        with transaction.atomic():
+            user = self.user
+            was_default = self.is_default
+            super().delete(*args, **kwargs)
 
-    #         super().save(*args, **kwargs)
+            if was_default:
+                next_address = Address.objects.filter(user=user).first()
+                if next_address:
+                    next_address.is_default = True
+                    next_address.save()
 
-    # def delete(self, *args, **kwargs):
-    #     with transaction.atomic():
-    #         was_default = self.is_default
-    #         user = self.user
-    #         super().delete(*args, **kwargs)
-    #         if was_default:
-    #             next_address = Address.objects.filter(
-    #                 user=user,
-    #             ).first()
-    #             if next_address:
-    #                 next_address.is_default = True
-    #                 next_address.save()
-
-    # class Meta:
-    #     constraints = [
-    #         models.UniqueConstraint(
-    #             fields=['user'],
-    #             condition=Q(is_default=True),
-    #             name='unique_default_address_per_profile'
-    #         )
-    #     ]
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=Q(is_default=True),
+                name="unique_default_address_per_user"
+            )
+        ]
 
     def __str__(self):
         return f"{self.address_line} for {self.user}"

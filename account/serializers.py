@@ -337,9 +337,10 @@ class UserInfoSerializer(serializers.ModelSerializer):
     service_provider_profile = ServiceProviderProfileSerializer()
     profile = serializers.ChoiceField(choices=UserDefault.choices, write_only=True)
     default_profile = serializers.CharField(read_only=True)
+
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "username", "email", "phone", "photo", "language", "service_category", "company_name", "logo", "customer_profile", "service_provider_profile", "profile", "default_profile"]
+        fields = ["id", "first_name", "last_name", "username", "email", "phone", "photo", "language", "service_category", "company_name", "logo", "customer_profile", "service_provider_profile", "profile", "default_profile"]
     
     def get_photo_url(self, photo, request):
         if photo and request:
@@ -348,14 +349,20 @@ class UserInfoSerializer(serializers.ModelSerializer):
             return None
     
     def get_user_profile_address(self, user, user_mode):
-        address_objects = Address.objects.filter(
-            user=user, is_default=True
-        )
-        
-        if address_objects:
-            address = address_objects.first()
-        elif Address.objects.filter(user=user).exists():
-            address = Address.objects.filter(user=user)
+        if user_mode == UserDefault.PROVIDER:
+            address_objects = user.service_provider_profile.office_location
+            if address_objects:
+                address = address_objects
+            elif Address.objects.filter(user=user).exists():
+                address = Address.objects.filter(user=user).first()
+        elif user_mode == UserDefault.CUSTOMER:
+            address_objects = Address.objects.filter(
+                user=user, is_default=True
+            )
+            if address_objects:
+                address = address_objects.first()
+            elif Address.objects.filter(user=user).exists():
+                address = Address.objects.filter(user=user).first()
         
         if address:
             return {
@@ -373,7 +380,7 @@ class UserInfoSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
 
         data["photo"] = self.get_photo_url(data.get("photo"), request)
-        data["address"] = self.get_user_profile_address(request.user, user_mode)
+        data["address"] = self.get_user_profile_address(instance, user_mode)
 
         if user_mode == UserDefault.CUSTOMER:
             data.pop("service_provider_profile")
@@ -382,6 +389,10 @@ class UserInfoSerializer(serializers.ModelSerializer):
         else:
             data.pop("service_provider_profile")
             data.pop("customer_profile")
+        
+        if hasattr(instance, "distance"):
+            data["distance_km"] = instance.distance
+
         return data
 
     def set_provider_data(self, instance, validated_data):

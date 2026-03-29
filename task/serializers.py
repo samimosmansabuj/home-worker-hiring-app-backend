@@ -10,14 +10,11 @@ class ServiceSubCategorySerializer(serializers.ModelSerializer):
         model = ServiceSubCategory
         fields = [ "id", "category", "title", "description", "icon", "is_active", "updated_at", "created_at"]
 
-
 class ServiceCategorySerializer(serializers.ModelSerializer):
     subcategory = ServiceSubCategorySerializer(many=True, read_only=True)
     class Meta:
         model = ServiceCategory
         fields = [ "id", "title", "description", "icon", "is_active", "updated_at", "created_at", "subcategory"]
-
-
 
 
 

@@ -329,8 +329,10 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     @action(detail=True, methods=["get", "post"], url_path="refund-request")
     def send_refund_request(self, request, *args, **kwargs):
         try:
+            order = self.get_object()
+            if order.status not in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]:
+                raise Exception("You can not send refund requst now!")
             with transaction.atomic():
-                order = self.get_object()
                 serializer = OrderRefundRequestSerializer(data=request.data, context={"request": request, "order": order})
                 serializer.is_valid(raise_exception=True)
                 serializer.save()

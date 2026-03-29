@@ -152,3 +152,20 @@ class NotifyType(models.TextChoices):
     DELETE = "DELETE"
 
 
+
+# For Core App============================================
+class TicketStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    IN_PROGRESS = "in_progress", "In Progress"
+    CLOSED = "closed", "Closed"
+
+class TicketSenderType(models.TextChoices):
+    USER = "user", "User"
+    ADMIN = "admin", "Admin"
+    # PROVIDER = "provider", "Provider"
+
+class TicketUserProfileType(models.TextChoices):
+    CUSTOMER = "CUSTOMER", _("Customer")
+    PROVIDER = "PROVIDER", _("Provider")
+
+

@@ -30,7 +30,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',
 
     # custom app
-    'account', 'chat_notify', 'task',
+    'account', 'chat_notify', 'task', 'core',
     
 ]
 

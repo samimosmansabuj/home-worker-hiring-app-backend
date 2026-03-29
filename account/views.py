@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.generics import RetrieveUpdateDestroyAPIView
 from django.http import JsonResponse
 from rest_framework.views import APIView
-from rest_framework.viewsets import ModelViewSet
+from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework import status, permissions
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenVerifyView, TokenRefreshView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -14,11 +14,12 @@ from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile
 from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer, ProviderVerificationSerializer
 from .utils import generate_otp, KYCVerificationService
 from django.db.models import Q
+from math import radians, cos, sin, asin, sqrt
 from find_worker_config.permissions import IsCustomer, IsValidFrontendRequest
 from find_worker_config.model_choice import OTPType, UserRole, UserDefault, DocumentStatus, UserStatus
 from .models import User, OTP, ProviderVerification
 from .utils import generate_otp, get_otp_object
-from find_worker_config.utils import UpdateModelViewSet
+from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
 from django.contrib.contenttypes.models import ContentType
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
@@ -841,12 +842,12 @@ class UserAddressViews(UpdateModelViewSet):
         log.create()
 
     def perform_create(self, serializer):
-        address_serializer = serializer.save()
+        address_serializer = serializer.save(is_default=True)
         self.create_log(address_serializer, "Add new address")
         return address_serializer
     
     def perform_update(self, serializer):
-        address_serializer = serializer.save()
+        address_serializer = serializer.save(is_default=True)
         self.create_log(address_serializer, "Update address")
         return address_serializer
 
@@ -914,8 +915,92 @@ class ProviderVerificationViews(APIView):
                     "message": str(e)
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+    
 # User Info Current ===========================
+
+
+# Buyer/Helper List for Customer/Client===================
+class HelperListViewset(UpdateReadOnlyModelViewSet):
+    queryset = User.objects.filter(
+        role=UserRole.USER,
+        status=UserStatus.ACTIVE,
+        service_provider_profile__isnull=False
+    ).select_related("service_provider_profile")
+    serializer_class = UserInfoSerializer
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["user_mode"] = UserDefault.PROVIDER
+        return context
+    
+    def haversine(self, lat1, lon1, lat2, lon2):
+        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+
+        # formula
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        c = 2 * asin(sqrt(a))
+        r = 6371  # Radius of earth in KM
+
+        return c * r
+
+    def get_queryset(self):
+        queryset = User.objects.filter(
+            role=UserRole.USER,
+            status=UserStatus.ACTIVE,
+            service_provider_profile__isnull=False
+        ).select_related("service_provider_profile")
+
+        # ---- Query Params ----
+        category_id = self.request.query_params.get("category_id")
+        subcategory_id = self.request.query_params.get("subcategory_id")
+        min_rating = self.request.query_params.get("rating")
+        lat = self.request.query_params.get("lat")
+        lng = self.request.query_params.get("lng")
+        radius = self.request.query_params.get("radius")
+        
+        # ---- Filter by Category ----
+        if subcategory_id:
+            queryset = queryset.filter(
+                service_provider_profile__service_subcategory__id=subcategory_id
+            )
+        elif category_id:
+            queryset = queryset.filter(
+                service_provider_profile__service_category__id=category_id
+            )
+
+        # ---- Filter by Rating ----
+        if min_rating:
+            queryset = queryset.filter(
+                service_provider_profile__rating__gte=float(min_rating)
+            )
+
+        # ---- Filter by Distance ----
+        if lat and lng and radius:
+            lat = float(lat)
+            lng = float(lng)
+            radius = float(radius)
+
+            filtered_users = []
+
+            for user in queryset:
+                address = user.service_provider_profile.office_location
+                if not address or not address.lat or not address.lng:
+                    continue
+
+                distance = self.haversine(lat, lng, address.lat, address.lng)
+
+                if distance <= radius:
+                    user.distance = round(distance, 2)  # attach dynamic field
+                    filtered_users.append(user)
+
+            queryset = filtered_users
+
+        return queryset
+    
+
+# Buyer/Helper List for Customer/Client===================
 
 
 

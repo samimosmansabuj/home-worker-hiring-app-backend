@@ -1,10 +1,11 @@
 from django.urls import path, include
-from .views import PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView
+from .views import PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView, HelperListViewset
 from rest_framework.routers import DefaultRouter
 from .site_views import SignUpSliderViewset, CustomerScreenSlideViewset, AdminWalletViews, UserDefaultLanguage
 
 router = DefaultRouter()
 router.register(r"address", UserAddressViews, basename="user_address")
+router.register(r"helper", HelperListViewset, basename="helper")
 
 site_router = DefaultRouter()
 site_router.register(r"signup-slide", SignUpSliderViewset, basename="site-signup-slide")
