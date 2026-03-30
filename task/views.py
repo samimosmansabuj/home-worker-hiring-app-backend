@@ -121,6 +121,72 @@ class CustomerOrderViewSet(UpdateModelViewSet):
         self.create_log("Update Order", instance, for_notify=False)
         return instance
 
+    @action(detail=False, methods=["post"], url_path="custom")
+    def create_with_provider(self, request):
+        try:
+            with transaction.atomic():
+                provider_id = request.data.get("provider_id")
+                amount = request.data.get("amount")
+                if not provider_id:
+                    return Response(
+                        {"status": False, "message": "Provider ID is required"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                provider = ServiceProviderProfile.objects.get(id=provider_id)
+                if provider.user == request.user:
+                    return Response(
+                        {"status": False, "message": "You cannot assign yourself"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                serializer = self.get_serializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                order = serializer.save(customer=request.user.hasCustomerProfile)
+
+                # Assign provider directly
+                order.provider = provider
+                order.status = OrderStatus.ACCEPT
+                order.save(update_fields=["provider", "status"])
+
+                # Create accepted request
+                order_request = OrderRequest.objects.create(
+                    order=order,
+                    provider=provider,
+                    status=OrderRequestStatus.ACCEPTED,
+                    budget=amount
+                )
+
+                # Logging
+                self.create_log(
+                    "Direct Order Created",
+                    entity=order,
+                    for_notify=True,
+                    user=provider.user,
+                    metadata={
+                        "reference_user_id": request.user.id,
+                        "reference_object_id": order_request.id,
+                        "reference_object_type": "OrderRequest"
+                    }
+                )
+
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Custom Order Created"
+                    },
+                    status=status.HTTP_201_CREATED
+                )
+        except ServiceProviderProfile.DoesNotExist:
+            return Response(
+                {"status": False, "message": "Provider not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"status": False, "message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
     @action(detail=True, methods=["get"], url_path=r"requests(?:/(?P<request_id>\d+))?")
     def requests(self, request, *args, **kwargs):
         order = self.get_object()
@@ -901,7 +967,6 @@ class OrderRefundViewSets(UpdateReadOnlyModelViewSet):
                     "message": str(e)
                 }, status=status.HTTP_400_BAD_REQUEST
             )
-
 
 # =================== Payment transaction Section Start===================================
 # ==========================================================================================

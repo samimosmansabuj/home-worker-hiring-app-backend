@@ -2,7 +2,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification, Referral, Voucher
+from .models import User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod
 from .utils import generate_otp
 from find_worker_config.model_choice import OTPType, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
 from django.core.exceptions import ObjectDoesNotExist
@@ -435,9 +435,59 @@ class UserInfoSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 
+# -------------------------------
+# Referral Serializer
+class ReferralSerializer(serializers.ModelSerializer):
+    referrer_email = serializers.EmailField(source="referrer.email", read_only=True)
+    referred_email = serializers.EmailField(source="referred.email", read_only=True)
 
+    class Meta:
+        model = Referral
+        fields = ["id", "referrer", "referrer_email", "referred", "referred_email", "code", "reward_given", "created_at"]
+        read_only_fields = ["code", "reward_given", "created_at"]
+# -------------------------------
+# -------------------------------
+# Voucher Serializer
+class VoucherSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Voucher
+        fields = "__all__"
+        read_only_fields = ["code", "is_used", "created_at"]
 
+    def validate(self, data):
+        if data.get("expiry_date") and data["expiry_date"] < timezone.now():
+            raise serializers.ValidationError("Expiry date must be in the future")
 
+        if data.get("discount_type") == "percentage":
+            if data.get("value") > 100:
+                raise serializers.ValidationError("Percentage cannot be more than 100")
+        return data
+# -------------------------------
+
+# -------------------------------
+# Apply Voucher Serializer
+class ApplyVoucherSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    order_amount = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+    def validate(self, data):
+        try:
+            voucher = Voucher.objects.get(code=data["code"], is_active=True)
+        except Voucher.DoesNotExist:
+            raise serializers.ValidationError("Invalid voucher")
+
+        if voucher.expiry_date < timezone.now():
+            raise serializers.ValidationError("Voucher expired")
+
+        if voucher.is_used:
+            raise serializers.ValidationError("Voucher already used")
+
+        if voucher.minimum_value and data["order_amount"] < voucher.minimum_value:
+            raise serializers.ValidationError("Minimum order value not met")
+
+        data["voucher"] = voucher
+        return data
+# -------------------------------
 
 class ProviderVerificationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -469,5 +519,61 @@ class ProviderVerificationSerializer(serializers.ModelSerializer):
             data["provider"] = build_user_profile(instance.provider.id, instance.provider.user)
         return data
 # User Info Current ===========================
+# =================================================================
+
+
+
+
+
+
+# =================================================================
+# Payment & Payout method ===========================
+class CustomerPaymentMethodSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerPaymentMethod
+        fields = ["id", "provider", "method_type", "payment_token", "brand", "last4", "method_data", "is_default", "created_at"]
+        read_only_fields = ["id", "created_at"]
+    
+    def create(self, validated_data):
+        user = self.context["request"].user
+        if validated_data.get("is_default"):
+            CustomerPaymentMethod.objects.filter(
+                user=user, is_default=True
+            ).update(is_default=False)
+
+        return CustomerPaymentMethod.objects.create(
+            **validated_data
+        )
+
+class ProviderPayoutMethodSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProviderPayoutMethod
+        fields = ["id", "method_type", "account_token", "account_holder_name", "bank_name", "account_number", "ifsc_code", "paypal_email", "method_data", "is_verified", "is_default", "created_at"]
+        read_only_fields = ["id", "is_verified", "created_at"]
+
+    def validate(self, data):
+        method_type = data.get("method_type")
+        if method_type == "BANK":
+            if not data.get("account_number") or not data.get("ifsc_code"):
+                raise serializers.ValidationError("Bank details required")
+
+        elif method_type == "PAYPAL":
+            if not data.get("paypal_email"):
+                raise serializers.ValidationError("PayPal email required")
+
+        return data
+
+    def create(self, validated_data):
+        provider = self.context["request"].user.hasServiceProviderProfile
+
+        if validated_data.get("is_default"):
+            ProviderPayoutMethod.objects.filter(
+                provider=provider, is_default=True
+            ).update(is_default=False)
+
+        return ProviderPayoutMethod.objects.create(
+            **validated_data
+        )
+# Payment & Payout method ===========================
 # =================================================================
 

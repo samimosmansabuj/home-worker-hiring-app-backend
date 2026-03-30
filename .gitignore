@@ -31,6 +31,7 @@ stderr.log
 
 public/
 tmp/
+AAA/
 restart.txt
 
 Documents.txt

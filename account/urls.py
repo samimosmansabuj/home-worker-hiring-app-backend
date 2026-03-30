@@ -1,15 +1,17 @@
 from django.urls import path, include
-from .views import PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView, HelperListViewset
+from .views import (
+    PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView, HelperListViewset, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView
+)
 from rest_framework.routers import DefaultRouter
-from .site_views import SignUpSliderViewset, CustomerScreenSlideViewset, AdminWalletViews, UserDefaultLanguage
 
 router = DefaultRouter()
 router.register(r"address", UserAddressViews, basename="user_address")
 router.register(r"helper", HelperListViewset, basename="helper")
+router.register(r'customer/payment-methods', CustomerPaymentMethodViewSet, basename='customer-payment')
+router.register(r'provider/payout-methods', ProviderPayoutMethodViewSet, basename='provider-payout')
+router.register(r"my-referrals", MyReferralViewSet, basename="my-referrals")
+router.register(r"my-vouchers", MyVoucherViewSet, basename="my-vouchers")
 
-site_router = DefaultRouter()
-site_router.register(r"signup-slide", SignUpSliderViewset, basename="site-signup-slide")
-site_router.register(r"customer-screen", CustomerScreenSlideViewset, basename="customer-screen")
 
 
 urlpatterns = [
@@ -39,8 +41,7 @@ urlpatterns = [
     path("provider-verification/", ProviderVerificationViews.as_view(), name="provider-verification"),
     path("user/language/", UserDefaultLanguage.as_view(), name="user-language"),
 
-    # Site Settings Urls========================================
-    path("site/", include(site_router.urls)),
-    path("site/admin-wallet/", AdminWalletViews.as_view(), name="admin=wallet")
+    # Referral & Voucher Section---------
+    path("vouchers/apply/", ApplyVoucherView.as_view(), name="apply-voucher"),
 ]
 

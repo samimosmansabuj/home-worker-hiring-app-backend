@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     'rest_framework', 'rest_framework_simplejwt',
     'corsheaders', 'django_extensions', 'django_filters',
     'rest_framework_simplejwt.token_blacklist',
+    'encrypted_model_fields',
 
     # custom app
     'account', 'chat_notify', 'task', 'core',
@@ -226,6 +227,7 @@ DEFAULT_FROM_EMAIL = 'your_email@example.com'
 # ==========================================================================================
 # =================API Extra Security================================
 FRONTEND_APP_KEY=os.getenv("FRONTEND_APP_KEY")
+FIELD_ENCRYPTION_KEY = os.getenv("FIELD_ENCRYPTION_KEY")
 # =================API Extra Security================================
 # ==========================================================================================
 

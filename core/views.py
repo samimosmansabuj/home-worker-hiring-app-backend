@@ -2,21 +2,25 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from .models import Ticket, TicketReply
-from .serializers import TicketSerializer, TicketReplySerializer, TicketStatusUpdateSerializer
-from find_worker_config.model_choice import TicketSenderType, TicketStatus, TicketUserProfileType
+from .models import Ticket, SignUpSlider, CustomerScreenSlide
+from .serializers import TicketSerializer, TicketReplySerializer, TicketStatusUpdateSerializer, AdminWalletSerializer, SignUpSliderSerializer, CustomerScreenSlideSerializer
+from find_worker_config.model_choice import TicketSenderType, TicketStatus, TicketUserProfileType, UserRole
 from find_worker_config.utils import UpdateModelViewSet, LogActivityModule
 from django.db import transaction
+from rest_framework.views import APIView
+from task.models import AdminWallet, PaymentTransaction
+from find_worker_config.permissions import IsAdminWritePermissionOnly
 
 # -------------------
 # Ticket ViewSet
-# -------------------
 class TicketViewSet(UpdateModelViewSet):
     queryset = Ticket.objects.all().order_by("-created_at")
     serializer_class = TicketSerializer
     permission_classes = [IsAuthenticated]
 
     def get_user_profile_type(self):
+        if self.request.user.role == UserRole.ADMIN:
+            raise Exception("Admin can't create tickets!")
         profile_type = self.request.headers.get("profile-type")
         if not profile_type:
             raise Exception("Profile Type Missing")
@@ -27,14 +31,15 @@ class TicketViewSet(UpdateModelViewSet):
         profile_type = self.request.headers.get("profile-type", "").upper()
         tickets = Ticket.objects.all().order_by("-created_at")
 
-        if user.role == TicketSenderType.USER and profile_type:
-            tickets = tickets.filter(user=user, user_profile_type=profile_type)
-        elif user.role == TicketSenderType.USER:
-            tickets = tickets.filter(user=user)
-        return tickets
+        if user.role == UserRole.USER and profile_type:
+            return tickets.filter(user=user, user_profile_type=profile_type)
+        elif user.role == UserRole.USER:
+            return tickets.filter(user=user)
+        elif user.role == UserRole.ADMIN:
+            return tickets
+        return None
 
     def get_serializer_class(self):
-        print("self.action: ", self.action)
         if self.action == "reply":
             return TicketReplySerializer
         elif self.action in ["update_status"]:
@@ -71,9 +76,20 @@ class TicketViewSet(UpdateModelViewSet):
         ticket = self.get_object()
         serializer = TicketReplySerializer(data=request.data, context={"request": request})
         if serializer.is_valid():
-            serializer.save(ticket=ticket)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            with transaction.atomic():
+                serializer.save(ticket=ticket)
+                return Response(
+                    {
+                        "status": True,
+                        "data": serializer.data
+                    }, status=status.HTTP_201_CREATED
+                )
+        return Response(
+            {
+                "status": False,
+                "message": serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST
+        )
     # -------------------
 
     # -------------------
@@ -81,11 +97,52 @@ class TicketViewSet(UpdateModelViewSet):
     @action(detail=True, methods=["post"])
     def close(self, request, pk=None):
         ticket = self.get_object()
-        if not (request.user.is_staff or ticket.user == request.user):
+        if not (request.user.role == UserRole.ADMIN or ticket.user == request.user):
             return Response({"detail": "Not allowed"}, status=status.HTTP_403_FORBIDDEN)
         ticket.status = "closed"
         ticket.save()
         serializer = self.get_serializer(ticket)
-        return Response(serializer.data)
+        return Response(
+            {
+                "status": True,
+                "data": serializer.data
+            }
+        )
     # -------------------
+# -------------------
+
+
+# -------------------
+# Admin Wallet Views
+class AdminWalletViews(APIView):
+    def get_wallet(self):
+        wallet, _ = AdminWallet.objects.get_or_create()
+        return wallet
+    
+    def get(self, request):
+        serializer = AdminWalletSerializer(self.get_wallet())
+        return Response(
+            {
+                "status": True,
+                "data": serializer.data
+            }
+        )
+# -------------------
+
+
+# -------------------
+# Singup Slider Viewsets
+class SignUpSliderViewset(UpdateModelViewSet):
+    queryset = SignUpSlider.objects.all()
+    serializer_class = SignUpSliderSerializer
+    permission_classes = [IsAdminWritePermissionOnly]
+# -------------------
+
+# -------------------
+# Customer Screen Slider Viewsets
+class CustomerScreenSlideViewset(UpdateModelViewSet):
+    queryset = CustomerScreenSlide.objects.all()
+    serializer_class = CustomerScreenSlideSerializer
+    permission_classes = [IsAdminWritePermissionOnly]
+# -------------------
 

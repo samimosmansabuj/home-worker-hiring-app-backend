@@ -1,7 +1,6 @@
 from django.shortcuts import render
 from rest_framework.response import Response
 from rest_framework.generics import RetrieveUpdateDestroyAPIView
-from django.http import JsonResponse
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework import status, permissions
@@ -10,13 +9,16 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework.request import Request
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
-from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile
-from .serializers import LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer, ProviderVerificationSerializer
+from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher
+from .serializers import (
+    LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer
+)
+from core.models import AddOfferVoucher
 from .utils import generate_otp, KYCVerificationService
 from django.db.models import Q
 from math import radians, cos, sin, asin, sqrt
 from find_worker_config.permissions import IsCustomer, IsValidFrontendRequest
-from find_worker_config.model_choice import OTPType, UserRole, UserDefault, DocumentStatus, UserStatus
+from find_worker_config.model_choice import OTPType, UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
 from .models import User, OTP, ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
@@ -30,6 +32,7 @@ from django.utils.translation import gettext_lazy as _
 from django.contrib.auth import get_user_model
 from urllib.parse import urlparse
 from django.core.files.base import ContentFile
+from rest_framework.decorators import action
 User = get_user_model()
 import requests
 import os
@@ -915,7 +918,151 @@ class ProviderVerificationViews(APIView):
                     "message": str(e)
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class UserDefaultLanguage(APIView):
+    def get(self, request, *args, **kwargs):
+        if request.session["language"]:
+            return Response(
+                {
+                    "status": True,
+                    "language": request.session["language"]
+                }
+            )
+        elif request.user.is_authenticated:
+            language = request.user.language
+        else:
+            language = UserLanguage.EN
+        request.session["language"] = language
+        return Response(
+            {
+                "status": True,
+                "language": request.session["language"]
+            }
+        )
     
+    def post(self, request):
+        data = request.data
+        lan = data.get("language" or UserLanguage.EN)
+        if lan in [UserLanguage.EN, UserLanguage.ZH]:
+            language = lan
+        else:
+            language = UserLanguage.EN
+        request.session["language"] = language
+        return Response(
+            {
+                "status": True,
+                "language": request.session["language"]
+            }
+        )
+
+
+# -------------------------------
+# My Referral Views
+class MyReferralViewSet(UpdateReadOnlyModelViewSet):
+    serializer_class = ReferralSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Referral.objects.filter(referrer=self.request.user) 
+# -------------------------------
+# -------------------------------
+# Voucher Views
+class MyVoucherViewSet(UpdateReadOnlyModelViewSet):
+    serializer_class = VoucherSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        vouchers = Voucher.objects.filter(
+            Q(user=self.request.user, voucher_type=VOUCHER_TYPE.FOR_USER) | Q(voucher_type=VOUCHER_TYPE.FOR_GLOBAL)
+        )
+        return vouchers
+
+    @action(detail=False, methods=["post"], url_path="add-voucher")
+    def add_voucher(self, request):
+        try:
+            voucher_code = request.data.get("voucher_code")
+            if not voucher_code:
+                raise Exception("Voucher code field is empty!")
+            elif self.get_queryset().filter(code=voucher_code).exists():
+                raise Exception("You've already saved this one! Find in Vouchers")
+            elif not AddOfferVoucher.objects.filter(code=voucher_code).exists():
+                raise Exception("This voucher does not exist. Please check if the voucher code was keyed in correctly.")
+            
+            with transaction.atomic():
+                offer_voucher = AddOfferVoucher.objects.get(code=voucher_code)
+                Voucher.objects.create(
+                    user=self.request.user,
+                    voucher_type=VOUCHER_TYPE.FOR_USER,
+                    name=offer_voucher.name,
+                    code=offer_voucher.code,
+                    discount_type=offer_voucher.discount_type,
+                    value=offer_voucher.value,
+                    minimum_value=offer_voucher.minimum_value,
+                    upto_value=offer_voucher.upto_value,
+                    expiry_date=offer_voucher.expiry_date,
+                )
+                return Response(
+                    {
+                        "status": True,
+                        "message": f"{voucher_code} Add in your account. Find in Vouchers."
+                    }
+                )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+# -------------------------------
+# -------------------------------
+# Apply Voucher (Important)
+class ApplyVoucherView(APIView):
+    serializer_class = ApplyVoucherSerializer
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            serializer = self.serializer_class(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            voucher = serializer.validated_data["voucher"]
+            amount = serializer.validated_data["order_amount"]
+
+            # Calculate discount
+            if voucher.discount_type == VOUCHER_DISCOUNT_TYPE.PERCENTAGE:
+                discount = (voucher.value / 100) * amount
+            else:
+                discount = voucher.value
+
+            if voucher.upto_value:
+                discount = min(discount, voucher.upto_value)
+
+            final_amount = amount - discount
+
+            return Response({
+                "original_amount": amount,
+                "discount": discount,
+                "final_amount": final_amount,
+                "voucher": voucher.code
+            }, status=status.HTTP_200_OK)
+        except ValidationError:
+            errors = {key: str(value[0]) for key, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": errors
+                }
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }
+            )
+# -------------------------------
+
 # User Info Current ===========================
 
 
@@ -998,9 +1145,59 @@ class HelperListViewset(UpdateReadOnlyModelViewSet):
             queryset = filtered_users
 
         return queryset
-    
 
 # Buyer/Helper List for Customer/Client===================
+
+
+
+# =================================================================
+# Payment & Payout method Viewsets ===========================
+class CustomerPaymentMethodViewSet(UpdateModelViewSet):
+    serializer_class = CustomerPaymentMethodSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return CustomerPaymentMethod.objects.filter(
+            user=self.request.user
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+    
+    @action(detail=True, methods=["post"], url_path="set-default")
+    def set_default(self, request, pk=None):
+        obj = self.get_object()
+        CustomerPaymentMethod.objects.filter(
+            user=request.user
+        ).update(is_default=False)
+        obj.is_default = True
+        obj.save()
+        return Response({"status": True, "message": "Default updated"}, status=status.HTTP_200_OK)
+
+class ProviderPayoutMethodViewSet(UpdateModelViewSet):
+    serializer_class = ProviderPayoutMethodSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return ProviderPayoutMethod.objects.filter(
+            provider=self.request.user.hasServiceProviderProfile
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(
+            provider=self.request.user.hasServiceProviderProfile
+        )
+
+    @action(detail=True, methods=["post"], url_path="set-default")
+    def set_default(self, request, pk=None):
+        obj = self.get_object()
+        self.get_queryset().update(is_default=False)
+        obj.is_default = True
+        obj.save()
+        return Response({"status": True, "message": "Default updated"}, status=status.HTTP_200_OK)
+
+# Payment & Payout method Viewsets ===========================
+# =================================================================
 
 
 

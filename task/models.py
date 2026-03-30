@@ -1,11 +1,12 @@
 from django.db import models
 from account.models import User, CustomerProfile, ServiceProviderProfile
-from find_worker_config.model_choice import ServiceTaskStatus, ServicePrototypeStatus, JobRequestStatus, OrderStatus, OrderRequestStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus
+from find_worker_config.model_choice import ServiceTaskStatus, ServicePrototypeStatus, JobRequestStatus, OrderStatus, OrderRequestStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus, OrderType
 from django.db import transaction
 from django.contrib.contenttypes.fields import GenericRelation, GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 import secrets
 import string
+from rest_framework.exceptions import ValidationError
 
 class ServiceCategory(models.Model):
     title = models.CharField(max_length=255)
@@ -41,9 +42,10 @@ class Order(models.Model):
     area = models.CharField(max_length=255)
     lat = models.DecimalField(max_digits=25, decimal_places=20, blank=True, null=True)
     lng = models.DecimalField(max_digits=25, decimal_places=20, blank=True, null=True)
-    budget_min = models.DecimalField(max_digits=10, decimal_places=2)
-    budget_max = models.DecimalField(max_digits=10, decimal_places=2)
+    budget_min = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    budget_max = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
+    order_type = models.CharField(max_length=20, choices=OrderType.choices, default=OrderType.MARKETPLACE)
     amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.ACTIVE)
     payment_status = models.CharField(max_length=20, choices=OrderPaymentStatus.choices, default=OrderPaymentStatus.UNPAID)
@@ -59,6 +61,14 @@ class Order(models.Model):
     
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        if self.order_type == OrderType.MARKETPLACE:
+            if not self.budget_min or not self.budget_max:
+                raise ValidationError("Budget is required for marketplace orders.")
+        elif self.order_type == OrderType.DIRECT:
+            if not self.amount:
+                raise ValidationError("Amount is required for direct orders.")
 
     def save(self, *args, **kwargs):
         if self.status == OrderStatus.ACCEPT and not self.provider:
@@ -83,7 +93,8 @@ class Order(models.Model):
                     provider=self.provider
                 ).update(status=OrderRequestStatus.TERMINATE)
 
-        if (is_status_changed and self.status == OrderStatus.ACTIVE and old_status in (OrderStatus.COMPLETED, OrderStatus.ACCEPT)):
+        # if (is_status_changed and self.status == OrderStatus.ACTIVE and old_status in (OrderStatus.COMPLETED, OrderStatus.ACCEPT)):
+        if (is_status_changed and self.status == OrderStatus.ACTIVE and old_status in (OrderStatus.CONFIRM, OrderStatus.ACCEPT)):
             with transaction.atomic():
                 OrderRequest.objects.filter(
                     order=self

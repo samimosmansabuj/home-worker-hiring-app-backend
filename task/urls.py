@@ -19,6 +19,6 @@ router.register(r"order-refund", OrderRefundViewSets, basename="order-refund")
 
 urlpatterns = [
     path("", include(router.urls)),
-    path("", include(router.urls)),
+    # path("", include(router.urls)),
 ]
 

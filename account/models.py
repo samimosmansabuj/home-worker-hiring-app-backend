@@ -3,7 +3,7 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Q
-from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
+from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, PayoutMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -11,6 +11,9 @@ from .utils import generate_otp, image_delete_os, previous_image_delete_os
 from django.db import transaction
 import random
 import string
+from encrypted_model_fields.fields import EncryptedCharField
+from django.db import transaction
+
 
 
 # Custom User Model====================================
@@ -171,13 +174,106 @@ class Address(models.Model):
         return f"{self.address_line} for {self.user}"
 
 
-# Payment Method Model=====================================
-class PaymentMethod(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
+# Payment Method Model=====================================  
+class CustomerPaymentMethod(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="payment_methods")
+    provider = models.CharField(max_length=50)  # stripe, razorpay
     method_type = models.CharField(max_length=30, choices=PaymentMethodType.choices)
-    provider = models.CharField(max_length=50)
-    masked_number = models.CharField(max_length=20)
 
+    payment_token = models.CharField(max_length=255)
+    brand = models.CharField(max_length=50, blank=True, null=True)
+    last4 = models.CharField(max_length=4, blank=True, null=True)
+    # optional extra data (non-sensitive only)
+    method_data = models.JSONField(blank=True, null=True)
+
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(is_default=True),
+                name="unique_default_payment_per_user"
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            if not CustomerPaymentMethod.objects.filter(user=self.user).exists():
+                self.is_default = True
+            
+            if self.is_default:
+                CustomerPaymentMethod.objects.filter(
+                    user=self.user,
+                    is_default=True
+                ).update(is_default=False)
+            super().save(*args, **kwargs)
+    
+    def delete(self, *args, **kwargs):
+        with transaction.atomic():
+            user = self.user
+            is_default = self.is_default
+            super().delete(*args, **kwargs)
+            if is_default:
+                next_method = CustomerPaymentMethod.objects.filter(user=user).first()
+                if next_method:
+                    next_method.is_default = True
+                    next_method.save()
+
+class ProviderPayoutMethod(models.Model):
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="payout_methods")
+    method_type = models.CharField(max_length=50, choices=PayoutMethodType.choices, default=PayoutMethodType.BANK)  # bank, paypal, stripe
+    account_holder_name = models.CharField(max_length=255, blank=True, null=True)
+
+    # External account reference (Stripe/PayPal/etc.)
+    account_token = models.CharField(max_length=255, blank=True, null=True)
+    # BANK
+    bank_name = models.CharField(max_length=255, blank=True, null=True)
+    # account_number = models.CharField(max_length=255, blank=True, null=True)
+    account_number = EncryptedCharField(max_length=255, blank=True, null=True)
+    ifsc_code = models.CharField(max_length=50, blank=True, null=True)
+    # PAYPAL
+    paypal_email = models.EmailField(blank=True, null=True)
+    # optional metadata
+    method_data = models.JSONField(blank=True, null=True)
+
+    is_verified = models.BooleanField(default=False)
+    is_default = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider"],
+                condition=models.Q(is_default=True),
+                name="unique_default_payout_per_provider"
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            if not ProviderPayoutMethod.objects.filter(provider=self.provider).exists():
+                self.is_default = True
+            
+            if self.is_default:
+                ProviderPayoutMethod.objects.filter(
+                    provider=self.provider,
+                    is_default=True
+                ).update(is_default=False)
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        with transaction.atomic():
+            provider = self.provider
+            is_default = self.is_default
+            super().delete(*args, **kwargs)
+            if is_default:
+                next_method = ProviderPayoutMethod.objects.filter(provider=provider).first()
+                if next_method:
+                    next_method.is_default = True
+                    next_method.save()
 
 # OTP Send Model==========================================
 class OTP(models.Model):
@@ -230,6 +326,7 @@ class ProviderVerification(models.Model):
         return f"{self.provider.user.first_name} {self.provider.user.last_name} Provider Profile is Verified: {self.is_verified}"
 
 
+
 # Logs Model==============================================
 class ActivityLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
@@ -246,51 +343,6 @@ class ActivityLog(models.Model):
         # return f"{self.user.username} {self.action} "
         username = self.user.username if self.user else None
         return f"{self.created_at} - {username} - {self.action}"
-
-
-# Site Settings Model========================================
-class SignUpSlider(models.Model):
-    text = models.TextField(max_length=255)
-    photo = models.ImageField(upload_to="slide/signup/", blank=True, null=True)
-    is_active = models.BooleanField(default=True)
-    create_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def image_update(self, instance):
-        previous_image_delete_os(instance.photo, self.photo)
-    
-    def delete(self, *args, **kwargs):
-        image_delete_os(self.photo)
-        return super().delete(*args, **kwargs)
-    
-    def save(self, *args, **kwargs):
-        if self.pk and SignUpSlider.objects.filter(pk=self.pk).exists():
-            instance = SignUpSlider.objects.get(pk=self.pk)
-            self.image_update(instance)
-        
-        return super().save(*args, **kwargs)
-
-class CustomerScreenSlide(models.Model):
-    text = models.TextField(max_length=255)
-    photo = models.ImageField(upload_to="slide/customer-screen/", blank=True, null=True)
-    is_active = models.BooleanField(default=True)
-    create_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def image_update(self, instance):
-        previous_image_delete_os(instance.photo, self.photo)
-    
-    def delete(self, *args, **kwargs):
-        image_delete_os(self.photo)
-        return super().delete(*args, **kwargs)
-    
-    def save(self, *args, **kwargs):
-        if self.pk and CustomerScreenSlide.objects.filter(pk=self.pk).exists():
-            instance = CustomerScreenSlide.objects.get(pk=self.pk)
-            self.image_update(instance)
-        
-        return super().save(*args, **kwargs)
-
 
 
 # Referral & Vouchar Model========================================
@@ -316,6 +368,9 @@ class Voucher(models.Model):
     is_active = models.BooleanField(default=True)
     expiry_date = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.code}) for {self.voucher_type}"
 
     def generate_redeem_code(self):
         code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))

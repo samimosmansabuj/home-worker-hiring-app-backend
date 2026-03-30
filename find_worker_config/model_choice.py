@@ -24,6 +24,10 @@ class PaymentMethodType(models.TextChoices):
     BANK = "BANK"
     WALLET = "WALLET"
 
+class PayoutMethodType(models.TextChoices):
+    BANK = "BANK"
+    WALLET = "WALLET"
+
 class OTPType(models.TextChoices):
     LOGIN = "LOGIN"
     SIGNUP = "SIGNUP"
@@ -108,6 +112,10 @@ class RefundStatus(models.TextChoices):
     APPROVED = "APPROVED", "Approved"
     REJECTED = "REJECTED", "Rejected"
     COMPLETED = "COMPLETED", "Completed"
+
+class OrderType(models.TextChoices):
+    MARKETPLACE = "MARKETPLACE", "Marketplace"
+    DIRECT = "DIRECT", "Direct"
 
 
 # For Wallet App===================================================
