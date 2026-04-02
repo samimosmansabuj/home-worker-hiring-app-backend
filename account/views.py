@@ -1137,13 +1137,11 @@ class HelperListViewset(UpdateReadOnlyModelViewSet):
         return round(6371 * c, 2)
     
     def get_map_distance(self, lat1, lon1, lat2, lon2):
-        api_key = "AIzaSyCZiZJG8xOhpqNXNhntx1gAxUl0QNK5NyY"
-        # url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={lat1},{lon1}&destinations={lat2},{lon2}&key={api_key}"
-
+        api_key = os.getenv("GOOGLE_MAP_API_KEY")
         url = f"https://maps.googleapis.com/maps/api/distancematrix/json"
         params = {
-            "origins": f"{lat1},{lng1}",
-            "destinations": f"{lat2},{lng2}",
+            "origins": f"{lat1},{lon1}",
+            "destinations": f"{lat2},{lon2}",
             "key": api_key
         }
         response = requests.get(url, params=params)
