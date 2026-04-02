@@ -1,6 +1,6 @@
 from django.urls import path, include
 from .views import (
-    PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView, HelperListViewset, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView
+    PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView, HelperListViewset, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView, ProviderAddressUpdateView
 )
 from rest_framework.routers import DefaultRouter
 
@@ -39,6 +39,7 @@ urlpatterns = [
     path("current-user/", UserInfoView.as_view(), name="current_user_info"),
     path("user/", include(router.urls)),
     path("provider-verification/", ProviderVerificationViews.as_view(), name="provider-verification"),
+    path("provider-address-update/", ProviderAddressUpdateView.as_view(), name="provider-address-update"),
     path("user/language/", UserDefaultLanguage.as_view(), name="user-language"),
 
     # Referral & Voucher Section---------

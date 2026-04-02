@@ -1,8 +1,10 @@
-from django.shortcuts import render
+import json
+import math
+import math
+from django.shortcuts import render, get_object_or_404
 from rest_framework.response import Response
-from rest_framework.generics import RetrieveUpdateDestroyAPIView
+from rest_framework.generics import RetrieveUpdateDestroyAPIView, UpdateAPIView
 from rest_framework.views import APIView
-from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework import status, permissions
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenVerifyView, TokenRefreshView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -11,7 +13,7 @@ from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher
 from .serializers import (
-    LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer
+    LoginOTPRequestSerializer, LoginOTPVerifySerializer, ProviderSerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer
 )
 from core.models import AddOfferVoucher
 from .utils import generate_otp, KYCVerificationService
@@ -22,10 +24,8 @@ from find_worker_config.model_choice import OTPType, UserRole, UserDefault, Docu
 from .models import User, OTP, ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
-from django.contrib.contenttypes.models import ContentType
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated
 from find_worker_config.utils import LogActivityModule
 from django.db import transaction
 from django.utils.translation import gettext_lazy as _
@@ -854,6 +854,18 @@ class UserAddressViews(UpdateModelViewSet):
         self.create_log(address_serializer, "Update address")
         return address_serializer
 
+    def perform_retrieve(self, serializer):
+        instance = self.get_object()
+        instance.is_default = True
+        instance.save(update_fields=["is_default"])
+        serializer = self.get_serializer(instance)
+        return Response(
+            {
+                'status': True,
+                'data': serializer.data
+            }, status=status.HTTP_200_OK
+        )
+
 class ProviderVerificationViews(APIView):
     serializer_class = ProviderVerificationSerializer
     permission_classes = [IsAuthenticated]
@@ -955,7 +967,42 @@ class UserDefaultLanguage(APIView):
             }
         )
 
+class ProviderAddressUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
 
+    def post(self, request):
+        try:
+            if not self.request.user.hasServiceProviderProfile:
+                raise Exception("This user have no provider profile.")
+            provider = request.user.hasServiceProviderProfile
+            data = request.data
+            address_object_id = data.get("address_object_id", None)
+            if address_object_id is None:
+                raise Exception("Address object id is required.")
+            address = get_object_or_404(
+                Address, id=address_object_id, user=request.user
+            )
+            if not address:
+                raise Exception("Address not found with this id for this user.")
+            provider.office_location = address
+            provider.save(update_fields=["office_location"])
+            return Response(
+                {
+                    "status": True,
+                    "message": "Office location updated successfully."
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+# User Info Current ===========================
+
+
+# Referral & Voucher Views==================================
 # -------------------------------
 # My Referral Views
 class MyReferralViewSet(UpdateReadOnlyModelViewSet):
@@ -1041,10 +1088,11 @@ class ApplyVoucherView(APIView):
             final_amount = amount - discount
 
             return Response({
+                "voucher_id": voucher.id,
+                "voucher_code": voucher.code,
                 "original_amount": amount,
                 "discount": discount,
-                "final_amount": final_amount,
-                "voucher": voucher.code
+                "final_amount": final_amount
             }, status=status.HTTP_200_OK)
         except ValidationError:
             errors = {key: str(value[0]) for key, value in serializer.errors.items()}
@@ -1062,8 +1110,7 @@ class ApplyVoucherView(APIView):
                 }
             )
 # -------------------------------
-
-# User Info Current ===========================
+# Referral & Voucher Views==================================
 
 
 # Buyer/Helper List for Customer/Client===================
@@ -1073,41 +1120,71 @@ class HelperListViewset(UpdateReadOnlyModelViewSet):
         status=UserStatus.ACTIVE,
         service_provider_profile__isnull=False
     ).select_related("service_provider_profile")
-    serializer_class = UserInfoSerializer
+    serializer_class = ProviderSerializer
+    permission_classes = [IsAuthenticated]
 
     def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context["user_mode"] = UserDefault.PROVIDER
-        return context
+        return {
+            "request": self.request
+        }
     
     def haversine(self, lat1, lon1, lat2, lon2):
         lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-
-        # formula
         dlon = lon2 - lon1
         dlat = lat2 - lat1
         a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
         c = 2 * asin(sqrt(a))
-        r = 6371  # Radius of earth in KM
+        return round(6371 * c, 2)
+    
+    def get_map_distance(self, lat1, lon1, lat2, lon2):
+        api_key = "AIzaSyCZiZJG8xOhpqNXNhntx1gAxUl0QNK5NyY"
+        # url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={lat1},{lon1}&destinations={lat2},{lon2}&key={api_key}"
 
-        return c * r
+        url = f"https://maps.googleapis.com/maps/api/distancematrix/json"
+        params = {
+            "origins": f"{lat1},{lng1}",
+            "destinations": f"{lat2},{lng2}",
+            "key": api_key
+        }
+        response = requests.get(url, params=params)
+        print("Google Maps API Response:", response.text)  # Debug log
+        if response.status_code != 200:
+            return None
+        data = response.json()
+        try:
+            distance_text = data["rows"][0]["elements"][0]["distance"]["text"]
+            distance_value = float(distance_text.replace(" km", "").replace(",", ""))
+            return distance_value
+        except (KeyError, IndexError, ValueError):
+            return None
 
     def get_queryset(self):
+        user = self.request.user
+        address = Address.objects.filter(user=user, is_default=True).first()
+        if not address:
+            return User.objects.none()
+        user_lat = address.lat
+        user_lng = address.lng
+
         queryset = User.objects.filter(
             role=UserRole.USER,
             status=UserStatus.ACTIVE,
             service_provider_profile__isnull=False
-        ).select_related("service_provider_profile")
+        ).exclude(
+            id=user.id
+        ).select_related(
+            "service_provider_profile__office_location"
+        ).prefetch_related(
+            "service_provider_profile__service_category"
+        )
 
         # ---- Query Params ----
         category_id = self.request.query_params.get("category_id")
         subcategory_id = self.request.query_params.get("subcategory_id")
         min_rating = self.request.query_params.get("rating")
-        lat = self.request.query_params.get("lat")
-        lng = self.request.query_params.get("lng")
         radius = self.request.query_params.get("radius")
-        
-        # ---- Filter by Category ----
+
+        # ---- Category Filter ----
         if subcategory_id:
             queryset = queryset.filter(
                 service_provider_profile__service_subcategory__id=subcategory_id
@@ -1117,34 +1194,35 @@ class HelperListViewset(UpdateReadOnlyModelViewSet):
                 service_provider_profile__service_category__id=category_id
             )
 
-        # ---- Filter by Rating ----
+        # ---- Rating Filter ----
         if min_rating:
             queryset = queryset.filter(
                 service_provider_profile__rating__gte=float(min_rating)
             )
 
-        # ---- Filter by Distance ----
-        if lat and lng and radius:
-            lat = float(lat)
-            lng = float(lng)
-            radius = float(radius)
+        # ---- Distance Calculation (ALWAYS attach) ----
+        providers_with_distance = []
+        for provider in queryset:
+            office = provider.service_provider_profile.office_location
+            if not office or not office.lat or not office.lng:
+                continue
+            distance = self.haversine(
+                user_lat,
+                user_lng,
+                office.lat,
+                office.lng
+            )
+            provider.distance_km = distance
 
-            filtered_users = []
+            # ---- Radius Filter ----
+            if radius:
+                if distance <= float(radius):
+                    providers_with_distance.append(provider)
+            else:
+                providers_with_distance.append(provider)
 
-            for user in queryset:
-                address = user.service_provider_profile.office_location
-                if not address or not address.lat or not address.lng:
-                    continue
-
-                distance = self.haversine(lat, lng, address.lat, address.lng)
-
-                if distance <= radius:
-                    user.distance = round(distance, 2)  # attach dynamic field
-                    filtered_users.append(user)
-
-            queryset = filtered_users
-
-        return queryset
+        providers_with_distance.sort(key=lambda x: x.distance_km)
+        return providers_with_distance
 
 # Buyer/Helper List for Customer/Client===================
 

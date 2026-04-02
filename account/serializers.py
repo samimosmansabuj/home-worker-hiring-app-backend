@@ -326,8 +326,20 @@ class ServiceProviderProfileSerializer(serializers.ModelSerializer):
     service_category = ServiceCategoryField()
     class Meta:
         model = ServiceProviderProfile
-        fields = ["company_name", "logo", "rating", "total_jobs", "service_category", "is_verified"]
+        fields = ["company_name", "logo", "rating", "total_jobs", "service_category", "office_location", "is_verified"]
         depth = True
+    
+    def get_office_location(self, obj):
+        address = obj.office_location
+        if not address:
+            return None
+        return {
+            "id": address.id,
+            "address_line": address.address_line,
+            "city": address.city,
+            "lat": address.lat,
+            "lng": address.lng,
+        }
 
 class UserInfoSerializer(serializers.ModelSerializer):
     service_category = ServiceCategoryField(required=True, source="service_provider_profile.service_category", write_only=True)
@@ -434,6 +446,56 @@ class UserInfoSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         instance.save()
         return instance
+
+class ProviderSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="service_provider_profile.company_name", read_only=True)
+    logo = serializers.SerializerMethodField()
+    rating = serializers.FloatField(source="service_provider_profile.rating", read_only=True)
+    total_jobs = serializers.IntegerField(source="service_provider_profile.total_jobs", read_only=True)
+    is_verified = serializers.BooleanField(source="service_provider_profile.is_verified", read_only=True)
+
+    service_category = serializers.SerializerMethodField()
+    office_location = serializers.SerializerMethodField()
+
+    distance_km = serializers.FloatField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id", "first_name", "last_name", "username", "email", "phone", "photo", "company_name", "logo", "rating", "total_jobs", "is_verified", "service_category", "office_location", "distance_km"
+        ]
+
+    def get_logo(self, obj):
+        logo = getattr(obj.service_provider_profile, "logo", None)
+        if logo:
+            request = self.context.get("request")
+            return request.build_absolute_uri(logo.url) if request else logo.url
+        return None
+
+    def get_service_category(self, obj):
+        profile = getattr(obj, "service_provider_profile", None)
+        if not profile:
+            return []
+        return [
+            {
+                "id": cat.id,
+                "title": cat.title
+            }
+            for cat in profile.service_category.all()
+        ]
+
+    def get_office_location(self, obj):
+        profile = getattr(obj, "service_provider_profile", None)
+        if not profile or not profile.office_location:
+            return None
+        office = profile.office_location
+        return {
+            "id": office.id,
+            "address_line": office.address_line,
+            "city": office.city,
+            "lat": office.lat,
+            "lng": office.lng,
+        }
 
 # -------------------------------
 # Referral Serializer
