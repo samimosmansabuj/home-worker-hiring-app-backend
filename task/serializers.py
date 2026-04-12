@@ -1,363 +1,166 @@
-from .models import ServiceCategory, ServiceSubCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction, ServiceSubCategory, OrderRefundRequest, OrderPaymentStatus
+from .models import ServiceCategory, ServiceSubCategory, Order, ReviewAndRating, PaymentTransaction, ServiceSubCategory, OrderRefundRequest, OrderPaymentStatus
 from rest_framework import serializers
 from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, ReviewRatingChoice, RefundStatus
 from account.models import User
 from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import ValidationError
 
 class ServiceSubCategorySerializer(serializers.ModelSerializer):
-    category = serializers.PrimaryKeyRelatedField(queryset=ServiceCategory.objects.all(), write_only=True)
     class Meta:
         model = ServiceSubCategory
-        fields = [ "id", "category", "title", "description", "icon", "is_active", "updated_at", "created_at"]
+        fields = "__all__"
 
 class ServiceCategorySerializer(serializers.ModelSerializer):
     subcategory = ServiceSubCategorySerializer(many=True, read_only=True)
+
     class Meta:
         model = ServiceCategory
-        fields = [ "id", "title", "description", "icon", "is_active", "updated_at", "created_at", "subcategory"]
-
-
-
-class OrderRequestSerializerForOrder(serializers.ModelSerializer):
-    class Meta:
-        model = OrderRequest
-        fields = ["id", "provider", "message", "budget", "status", "created_at", "updated_at"]
-
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        provider = User.objects.get(service_provider_profile__id=data.pop("provider"))
-        data["provider"] = {
-            "id": provider.id,
-            "first_name": provider.first_name,
-            "last_name": provider.last_name,
-            "email": provider.email,
-            "phone": provider.phone,
-        }
-        return data
-    
-    def validate(self, attrs):
-        order = self.context["order"]
-        request = self.context.get("request")
-        user = request.user
-        profile_type = request.headers.get("PROFILE-TYPE")
-        if not profile_type:
-            raise Exception("Profile Type must be set in headers.")
-        if order.customer.user == user:
-            raise Exception("Same user can't send order request.")
-        if profile_type.upper() != UserDefault.PROVIDER:
-            raise Exception("Only providers can send order requests.")
-        if OrderRequest.objects.filter(order=order, provider=user.hasServiceProviderProfile).exists():
-            raise Exception("You already applied for this order.")
-        if not (order.budget_min <= attrs["budget"] <= order.budget_max):
-            raise Exception("Budget out of range.")
-        attrs["provider"] = user.hasServiceProviderProfile
-        return attrs
-
-class ReviewAndRatingSerializerForOrder(serializers.ModelSerializer):
-    class Meta:
-        model = ReviewAndRating
         fields = "__all__"
-        read_only_fields = ["customer", "provider"]
 
-    def validate(self, attrs):
-        order = attrs.get("order")
-        if order.status not in (OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE):
-            raise Exception("This order isn't Complete!")
-        request = self.context.get("request")
-        user = request.user
-        if order.customer != user.customer:
-            raise Exception("You can't create review for this order!")
-        provider = order.provider
-        if not provider:
-            raise Exception("Provider has been empty!")
-        attrs["customer"] = user.customer
-        attrs["provider"] = provider
-        return attrs
+
+
 
 class OrderSerializer(serializers.ModelSerializer):
     category = serializers.PrimaryKeyRelatedField(queryset=ServiceCategory.objects.all())
-    subcategory = serializers.PrimaryKeyRelatedField(queryset=ServiceSubCategory.objects.all(), required=False)
-    order_requests = OrderRequestSerializerForOrder(many=True, read_only=True, source="order_requests.order_by")
-    service_data = serializers.DateTimeField(required=True)
-    order_review = serializers.PrimaryKeyRelatedField(read_only=True)
-    refund_request = serializers.PrimaryKeyRelatedField(read_only=True)
+    subcategory = serializers.PrimaryKeyRelatedField(
+        queryset=ServiceSubCategory.objects.all(),
+        required=False,
+        allow_null=True
+    )
+
+    customer = serializers.SerializerMethodField()
+    provider = serializers.SerializerMethodField()
+    order_review = serializers.SerializerMethodField()
+    refund_request = serializers.SerializerMethodField()
+
     class Meta:
         model = Order
         fields = "__all__"
-        read_only_fields = ("customer", "provider", "order_review", "refund_request")
-    
+        read_only_fields = ("customer", "provider")
+
+    # -----------------------------
+    # VALIDATION
+    # -----------------------------
     def validate(self, attrs):
-        request = self.context.get("request")
+        request = self.context["request"]
         profile_type = request.headers.get("profile-type", "").upper()
-        method = request.method
-        instance = self.instance
-        if instance and request.method in ("PATCH", "PUT"):
-            if instance.status in (
+
+        # Provider cannot create order
+        if profile_type == "PROVIDER":
+            raise ValidationError("Provider cannot create order")
+
+        # Prevent update after locked states
+        if self.instance:
+            if self.instance.status in [
                 OrderStatus.CONFIRM,
                 OrderStatus.IN_PROGRESS,
                 OrderStatus.COMPLETED,
-                OrderStatus.PARTIAL_COMPLETE,
                 OrderStatus.CANCELLED,
                 OrderStatus.REFUND,
-            ):
-                raise serializers.ValidationError(
-                    f"Order cannot be updated when status is {instance.status}"
-                )
-            
-        
-        if profile_type.upper() == UserDefault.PROVIDER:
-            raise Exception("Provider can't Update or Create Order Details.")
-        elif profile_type.upper() == UserRole.ADMIN:
-            if method in ("POST"):
-                raise Exception("Admin can't create an Order.")
-        
-        if attrs.get("budget_min") and attrs.get("budget_max"):
-            if attrs.get("budget_min") > attrs.get("budget_max"):
-                raise Exception("Minimum budget cannot exceed maximum budget!")
+            ]:
+                raise ValidationError("Order cannot be modified in this state")
+
         return attrs
 
-    def to_representation(self, instance):
-        request = self.context.get("request")
-        def build_user_profile(id, user):
-            return {
-                "id": id,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "photo": request.build_absolute_uri(user.photo.url) if user.photo else None,
-                "email": user.email,
-                "phone": user.phone,
-            }
-        category = {
-            "id": instance.category.id,
-            "title": instance.category.title,
-            "description": instance.category.description,
-            "icon": instance.category.icon
-        }
-        if instance.subcategory:
-            subcategory = {
-                "id": instance.subcategory.id,
-                "title": instance.subcategory.title,
-                "description": instance.subcategory.description,
-                "icon": instance.subcategory.icon
-            }
-        else:
-            subcategory = None
-        customer = build_user_profile(instance.customer.id, instance.customer.user)
-        provider = build_user_profile(instance.provider.id, instance.provider.user) if instance.provider else None
-
-        # custom data representation
-        data = super().to_representation(instance)
-        new_data = {
-            "id": data["id"],
-            "category": category,
-            "subcategory": subcategory or None,
-            "customer": customer,
-            "provider": provider,
-            "title": data["title"],
-            "description": data["description"],
-            "area": data["area"],
-            "status": data["status"],
-            "payment_status": data["payment_status"]
-        }
-        
-        # show amount according to status 
-        if data["status"] in (OrderStatus.ACTIVE):
-            new_data["budget_min"] = data["budget_min"]
-            new_data["budget_max"] = data["budget_max"]
-        else:
-            # new_data["provider"] = data["provider"]
-            new_data["amount"] = data["amount"]
-        
-        # meta data 
-        new_data["service_data"] = data["service_data"]
-        new_data["updated_at"] = data["updated_at"]
-        new_data["created_at"] = data["created_at"]
-        
-        # representation oder request
-        new_data["total_order_requests"] = len(data["order_requests"])
-        if request:
-            user = request.user
-            if user.role == UserRole.USER and instance.order_requests.filter(provider=user.hasServiceProviderProfile).exists():
-                provider_id = user.id
-                new_data["order_requests"] = [
-                    req
-                    for req in data.get("order_requests", [])
-                    if req.get("provider", {}).get("id", {}) == provider_id
-                ]
-            elif user.role == UserRole.USER and user.hasCustomerProfile == instance.customer:
-                new_data["order_requests"] = data["order_requests"]
-            elif user.role == UserRole.ADMIN:
-                new_data["order_requests"] = data["order_requests"]
-        
-        # representation order review
-        order_review = get_object_or_404(ReviewAndRating, pk=data.get("order_review")) if data.get("order_review") else None
-        if instance.status in [OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE]:
-            if order_review:
-                review ={
-                    "id": order_review.id,
-                    "rating": order_review.rating,
-                    "review": order_review.review,
-                    "created": order_review.created,
-                }
-                new_data["order_review"] = review
-            else:
-                new_data["order_review"] = order_review
-
-        refund_request = get_object_or_404(OrderRefundRequest, pk=data.get("refund_request")) if data.get("refund_request") else None
-        if instance.status in [OrderStatus.REFUND, OrderStatus.REFUND_REQUEST]:
-            if refund_request:
-                new_data["refund_request"] = {
-                    "id": refund_request.id,
-                    "reason": refund_request.reason,
-                    "status": refund_request.status,
-                    "refund_amount": refund_request.refund_amount,
-                    "admin_note": refund_request.admin_note,
-                    "processed_by": refund_request.processed_by.username,
-                    "processed_at": refund_request.processed_at,
-                    "created_at": refund_request.created_at,
-                    "updated_at": refund_request.updated_at,
-                }
-            else:
-                new_data["refund_request"] = refund_request
-        return new_data
-    
+    # -----------------------------
+    # CREATE
+    # -----------------------------
     def create(self, validated_data):
-        request = self.context.get("request")
-        user = request.user
-        profile = user.hasCustomerProfile
-        if not profile:
-            raise Exception("Customer profile required.")
-        validated_data["customer"] = profile
+        user = self.context["request"].user
+
+        if not hasattr(user, "hasCustomerProfile"):
+            raise ValidationError("Customer profile required")
+
+        validated_data["customer"] = user.hasCustomerProfile
         return super().create(validated_data)
 
+    # -----------------------------
+    # REPRESENTATION HELPERS
+    # -----------------------------
+    def get_customer(self, obj):
+        if not obj.customer:
+            return None
+        user = obj.customer.user
+        return {
+            "id": obj.customer.id,
+            "name": f"{user.first_name} {user.last_name}",
+            "email": user.email,
+            "phone": user.phone,
+        }
 
+    def get_provider(self, obj):
+        if not obj.provider:
+            return None
+        user = obj.provider.user
+        return {
+            "id": obj.provider.id,
+            "name": f"{user.first_name} {user.last_name}",
+            "email": user.email,
+            "phone": user.phone,
+        }
 
-class OrderRequestSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = OrderRequest
-        fields = "__all__"
-        read_only_fields = ["provider"]
-    
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        return data
-    
-    def validate(self, attrs):
-        order = self.context["order"]
-        request = self.context.get("request")
-        user = request.user
-        profile_type = request.headers.get("PROFILE-TYPE")
-        if not profile_type:
-            raise Exception("Profile Type must be set in headers.")
-        if order.customer.user == user:
-            raise Exception("Same user can't send order request.")
-        if profile_type.upper() != UserDefault.PROVIDER:
-            raise Exception("Only providers can send order requests.")
-        if OrderRequest.objects.filter(order=order, provider=user.hasServiceProviderProfile).exists():
-            raise Exception("You already applied for this order.")
-        if not (order.budget_min <= attrs["budget"] <= order.budget_max):
-            raise Exception("Budget out of range.")
-        attrs["provider"] = user.hasServiceProviderProfile
-        return attrs
+    def get_order_review(self, obj):
+        review = obj.order_review.first() if hasattr(obj, "order_review") else None
+        if not review:
+            return None
+        return {
+            "rating": review.rating,
+            "review": review.review,
+        }
+
+    def get_refund_request(self, obj):
+        refund = getattr(obj, "refund_request", None)
+        if not refund:
+            return None
+        return {
+            "status": refund.status,
+            "amount": refund.refund_amount,
+        }
 
 class ReviewAndRatingSerializer(serializers.ModelSerializer):
-    rating = serializers.ChoiceField(choices=ReviewRatingChoice.choices, required=True)
+
     class Meta:
         model = ReviewAndRating
         fields = "__all__"
         read_only_fields = ["customer", "provider", "order"]
-    
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        new_data = {
-            "id": data.get("id"),
-            "rating": data.get("rating"),
-            "review": data.get("review"),
-            "created": data.get("created"),
-        }
-
-        customer_object = instance.customer
-        provider_object = instance.provider
-        order_object = instance.order
-        request = self.context.get("request")
-        present = self.context.get("present", None)
-
-        if present is None:
-            def build_user_profile(id, user):
-                return {
-                    "id": id,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "photo": request.build_absolute_uri(user.photo.url) if user.photo else None,
-                    "email": user.email,
-                    "phone": user.phone,
-                }
-            customer = build_user_profile(customer_object.id, customer_object.user)
-            # provider = build_user_profile(provider_object.id, provider_object.user)
-            order = {
-                "id": order_object.id,
-                "title": order_object.title,
-                "status": order_object.status,
-            }
-
-            new_data["order"] = order
-            new_data["customer"] = customer
-            # new_data["provider"] = provider
-        return new_data
 
     def validate(self, attrs):
-        order = self.context.get("order")
+        request = self.context["request"]
+        order = self.context["order"]
 
-        # Customer Check & Permission---------
-        request = self.context.get("request")
+        if order.status not in [OrderStatus.COMPLETED]:
+            raise ValidationError("Order not completed")
+
         if order.customer != request.user.hasCustomerProfile:
-            raise Exception("You can't create review for this order!")
-        
-        # Provider Check
-        if not order.provider:
-            raise Exception("Provider has been empty!")
+            raise ValidationError("Not allowed")
 
-        # Order Status Check & Error Handling
-        if order.status not in (OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE):
-            raise Exception("This order isn't Complete!")
-        
-        attrs["order"] = order
         attrs["customer"] = request.user.hasCustomerProfile
         attrs["provider"] = order.provider
+        attrs["order"] = order
+
         return attrs
 
 class OrderRefundRequestSerializer(serializers.ModelSerializer):
+
     class Meta:
         model = OrderRefundRequest
         fields = "__all__"
         read_only_fields = ["customer", "order"]
-    
+
     def validate(self, attrs):
-        order = self.context.get("order")
+        request = self.context["request"]
+        order = self.context["order"]
 
-        # Customer Check & Permission---------
-        request = self.context.get("request")
         if order.customer != request.user.hasCustomerProfile:
-            raise Exception("You can't send refund request for this order!")
+            raise ValidationError("Not allowed")
 
-        # Order Status Check & Error Handling
-        if order.status not in (OrderStatus.CONFIRM) and order.payment_status not in (OrderPaymentStatus.PAID):
-            raise Exception("This order isn't available for Refund Request!")
-        
-        attrs["order"] = order
+        if order.payment_status != OrderPaymentStatus.PAID:
+            raise ValidationError("Order not paid")
+
         attrs["customer"] = request.user.hasCustomerProfile
+        attrs["order"] = order
+
         return attrs
-
-class OrderRefundRequestActionSerializer(serializers.Serializer):
-    status = serializers.ChoiceField(choices=RefundStatus.choices, required=True)
-    admin_note = serializers.CharField(required=False)
-    amount = serializers.FloatField(required=False)
-    trnx_id = serializers.CharField(required=False)
-
-
-
-
-
 
 
 

@@ -1,16 +1,17 @@
 from django.db import models
-from account.models import User
+from account.models import CustomerProfile, ServiceProviderProfile, User
 # from task.models import ServiceTask
-from find_worker_config.model_choice import SendMessageType, CustomOfferStatus, NotifyType
+from find_worker_config.model_choice import SendMessageType, CustomOfferStatus, NotifyType, UserDefault
 import uuid
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from account.utils import image_delete_os, previous_image_delete_os
+from task.models import Order, OrderChangesRequest
 
 class ChatRoom(models.Model):
     uuid = models.CharField(max_length=255, blank=True, null=True)
-    customer = models.ForeignKey(User, on_delete=models.CASCADE, related_name="chat_customer")
-    provider = models.ForeignKey(User, on_delete=models.CASCADE, related_name="chat_provider")
+    customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name="chat_customer")
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="chat_provider")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
@@ -26,7 +27,8 @@ class ChatRoom(models.Model):
 
 class ChatMessage(models.Model):
     room = models.ForeignKey(ChatRoom, on_delete=models.CASCADE, related_name='messages')
-    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="messages")
+    # sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="messages")
+    sender = models.CharField(max_length=20, choices=UserDefault.choices)
     type = models.CharField(max_length=16, choices=SendMessageType, default=SendMessageType.TEXT)
     content = models.TextField(blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
@@ -37,6 +39,13 @@ class ChatMessage(models.Model):
     
     def __str__(self):
         return f"{self.sender.email}: {self.content[:20]}"
+
+class CustomOffer(models.Model):
+    message = models.OneToOneField(ChatMessage, on_delete=models.CASCADE, related_name="custom_offers")
+    order_object = models.ForeignKey(Order, on_delete=models.SET_NULL, blank=True, null=True)
+    reference_object = models.ForeignKey(OrderChangesRequest, on_delete=models.SET_NULL, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 class Attachment(models.Model):
     message = models.ForeignKey(ChatMessage, on_delete=models.CASCADE, related_name="attachments")
@@ -60,6 +69,7 @@ class Attachment(models.Model):
 
 class Notification(models.Model):
     received = models.ForeignKey(User, on_delete=models.CASCADE)
+    profile = models.CharField(max_length=20, choices=UserDefault.choices)
     action = models.CharField(max_length=255)
     metadata = models.JSONField(default=dict, blank=True, null=True)
     is_read = models.BooleanField(default=False)

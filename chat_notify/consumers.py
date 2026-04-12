@@ -14,12 +14,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         user = self.scope['user']
         self.roomId = self.scope['url_route']['kwargs']['roomId']
+        self.profileType = self.scope['url_route']['kwargs']['profileType']
         if not user.is_authenticated:
             raise DenyConnection("Unauthorized")
         if await self.verify_room_id(self.roomId) is False:
             await self.close()
             return
-        if  await self.check_user_and_room(user, self.roomId) is False:
+        if  await self.check_user_and_room(user, self.profileType, self.roomId) is False:
             await self.close()
             return
 
@@ -185,11 +186,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return status
     
     @database_sync_to_async
-    def check_user_and_room(self, user, room_uuid):
+    def check_user_and_room(self, user, profileType, room_uuid):
+        from find_worker_config.model_choice import UserDefault
         room = ChatRoom.objects.get(uuid=room_uuid)
-        if room.customer == user or room.provider == user:
+
+        if room.customer.user == room.provider.user:
+            return False
+        elif profileType.upper() == UserDefault.CUSTOMER and room.customer == user.customer_profile:
             return True
-        return False
+        elif profileType.upper() == UserDefault.PROVIDER and room.provider == user.service_provider_profile:
+            return True
+        else:
+            return False
     # ======================Database Object Update in Websocket Consumer================
     
     def _http_scheme(self) -> str:

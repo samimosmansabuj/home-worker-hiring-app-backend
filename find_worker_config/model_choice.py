@@ -19,6 +19,38 @@ class UserStatus(models.TextChoices):
     DEACTIVE = "DEACTIVE"
     REJECTED = "REJECTED"
 
+class HelperStatus(models.TextChoices):
+    GOOD = "GOOD"
+    WARNING = "WARNING"
+    DANGER = "DANGER"
+    TEMPORARY_SUSPENSED = "TEMPORARY_SUSPENSED"
+    PERMANENT_SUSPENSED = "PERMANENT_SUSPENSED"
+
+class WeekDay(models.TextChoices):
+    MON = "mon", "Monday"
+    TUE = "tue", "Tuesday"
+    WED = "wed", "Wednesday"
+    THU = "thu", "Thursday"
+    FRI = "fri", "Friday"
+    SAT = "sat", "Saturday"
+    SUN = "sun", "Sunday"
+
+class DayStatus(models.TextChoices):
+    AVAILABLE = "AVAILABLE"
+    OFF = "OFF"
+    UNAVAILABLE = "UNAVAILABLE"
+
+class DateStatus(models.TextChoices):
+    AVAILABLE = "AVAILABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+
+class HelperSlotExceptionType(models.TextChoices):
+    BOOKED = "BOOKED"
+    UNAVAILABLE = "UNAVAILABLE"
+    AVAILABLE = "AVAILABLE"
+    FREEZED = "FREEZED"
+
+
 class PaymentMethodType(models.TextChoices):
     CARD = "CARD"
     BANK = "BANK"
@@ -52,38 +84,13 @@ class VOUCHER_DISCOUNT_TYPE(models.TextChoices):
 class VOUCHER_TYPE(models.TextChoices):
     FOR_USER = "FOR_USER"
     FOR_GLOBAL = "FOR_GLOBAL"
-    
+
+# For Account App================================================
+
 
 # For Task App===================================================
-class ServiceTaskStatus(models.TextChoices):
-    PENDING = "PENDING"
-    ACTIVE = "ACTIVE"
-    HIRED = "HIRED"
-    COMPLETE = "COMPLETE"
-    CANCELLED = "CANCELLED"
-    FAILED = "FAILED"
-
-class ServicePrototypeStatus(models.TextChoices):
-    PENDING = "PENDING"
-    ACTIVE = "ACTIVE"
-    HIRED = "HIRED"
-    COMPLETE = "COMPLETE"
-    CANCELLED = "CANCELLED"
-    FAILED = "FAILED"
-
-class JobRequestStatus(models.TextChoices):
-    PENDING = "PENDING"
-    ACCEPTED = "ACCEPTED"
-    REJECTED = "REJECTED"
-
-class OrderRequestStatus(models.TextChoices):
-    PENDING = "PENDING"
-    ACCEPTED = "ACCEPTED"
-    TERMINATE = "TERMINATE"
-    REJECTED = "REJECTED"
-
 class OrderStatus(models.TextChoices):
-    ACTIVE = "ACTIVE"
+    PENDING = "PENDING"
     ACCEPT = "ACCEPT"
     CONFIRM = "CONFIRM"
     IN_PROGRESS = "IN_PROGRESS"
@@ -100,6 +107,14 @@ class OrderPaymentStatus(models.TextChoices):
     CANCELLED = "CANCELLED"
     REFUND = "REFUND"
 
+class ChangesRequestType(models.TextChoices):
+    TIME = "TIME"
+    DATE = "DATE"
+    TIME_AND_DATE = "TIME_AND_DATE"
+    AMOUNT = "AMOUNT"
+    COUNTER = "COUNTER"
+    SET_HOUR = "SET_HOUR"
+
 class ReviewRatingChoice(models.IntegerChoices):
     ONE = 1
     TWO = 2
@@ -113,9 +128,7 @@ class RefundStatus(models.TextChoices):
     REJECTED = "REJECTED", "Rejected"
     COMPLETED = "COMPLETED", "Completed"
 
-class OrderType(models.TextChoices):
-    MARKETPLACE = "MARKETPLACE", "Marketplace"
-    DIRECT = "DIRECT", "Direct"
+# For Task App===================================================
 
 
 # For Wallet App===================================================
@@ -140,12 +153,12 @@ class ServiceChargeType(models.TextChoices):
 
 # For Chat & Notify App============================================
 class SendMessageType(models.TextChoices):
-    TEXT = "Text"
-    IMAGE = "Image"
-    VIDEO = "Video"
-    AUDIO = "Audio"
-    FILE  = "File"
-    OFFER = "Offer"
+    TEXT = "TEXT"
+    IMAGE = "IMAGE"
+    VIDEO = "VIDEO"
+    AUDIO = "AUDIO"
+    FILE  = "FILE"
+    OFFER = "OFFER"
 
 class CustomOfferStatus(models.TextChoices):
     SEND = "SEND"
@@ -158,6 +171,8 @@ class NotifyType(models.TextChoices):
     CREATE = "CREATE"
     UPDATE = "UPDATE"
     DELETE = "DELETE"
+
+# For Chat & Notify App============================================
 
 
 

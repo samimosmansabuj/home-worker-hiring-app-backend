@@ -1,6 +1,8 @@
+from datetime import datetime, timedelta
+
 from django.db import models
 from account.models import User, CustomerProfile, ServiceProviderProfile
-from find_worker_config.model_choice import ServiceTaskStatus, ServicePrototypeStatus, JobRequestStatus, OrderStatus, OrderRequestStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus, OrderType
+from find_worker_config.model_choice import ChangesRequestType, OrderStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault
 from django.db import transaction
 from django.contrib.contenttypes.fields import GenericRelation, GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -42,14 +44,13 @@ class Order(models.Model):
     area = models.CharField(max_length=255)
     lat = models.DecimalField(max_digits=25, decimal_places=20, blank=True, null=True)
     lng = models.DecimalField(max_digits=25, decimal_places=20, blank=True, null=True)
-    budget_min = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    budget_max = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
-    order_type = models.CharField(max_length=20, choices=OrderType.choices, default=OrderType.MARKETPLACE)
     amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
-    status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.ACTIVE)
+    status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING)
     payment_status = models.CharField(max_length=20, choices=OrderPaymentStatus.choices, default=OrderPaymentStatus.UNPAID)
-    service_data = models.DateTimeField(blank=True, null=True)
+    working_date = models.DateField(blank=True, null=True)
+    working_start_time = models.TimeField(blank=True, null=True)
+    working_hour = models.PositiveIntegerField(default=60)
     confirmation_OTP = models.CharField(max_length=6, blank=True, null=True)
 
     payment_transactions = GenericRelation(
@@ -62,65 +63,53 @@ class Order(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def clean(self):
-        if self.order_type == OrderType.MARKETPLACE:
-            if not self.budget_min or not self.budget_max:
-                raise ValidationError("Budget is required for marketplace orders.")
-        elif self.order_type == OrderType.DIRECT:
-            if not self.amount:
-                raise ValidationError("Amount is required for direct orders.")
-
+    @property
+    def end_time(self):
+        return (datetime.combine(date.today(), self.working_start_time) + timedelta(minutes=self.working_hour)).time()
+    
     def save(self, *args, **kwargs):
-        if self.status == OrderStatus.ACCEPT and not self.provider:
-            raise ValueError("Cannot accept order without provider")
         is_status_changed = False
         if self.pk:
             old_status = Order.objects.get(pk=self.pk).status
             is_status_changed = old_status != self.status
-        if self.payment_status == OrderPaymentStatus.PAID and self.status in [OrderStatus.ACCEPT, OrderStatus.ACTIVE]:
+        if self.payment_status == OrderPaymentStatus.PAID and self.status in [OrderStatus.ACCEPT, OrderStatus.PENDING]:
             self.status = OrderStatus.CONFIRM
-        super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
-        if (is_status_changed and self.status == OrderStatus.ACCEPT and self.provider):
-            with transaction.atomic():
-                OrderRequest.objects.filter(
-                    order=self,
-                    provider=self.provider
-                ).update(status=OrderRequestStatus.ACCEPTED)
-                OrderRequest.objects.filter(
-                    order=self
-                ).exclude(
-                    provider=self.provider
-                ).update(status=OrderRequestStatus.TERMINATE)
-
-        # if (is_status_changed and self.status == OrderStatus.ACTIVE and old_status in (OrderStatus.COMPLETED, OrderStatus.ACCEPT)):
-        if (is_status_changed and self.status == OrderStatus.ACTIVE and old_status in (OrderStatus.CONFIRM, OrderStatus.ACCEPT)):
-            with transaction.atomic():
-                OrderRequest.objects.filter(
-                    order=self
-                ).update(status=OrderRequestStatus.PENDING)
-
-class OrderRequest(models.Model):
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="order_requests", blank=True, null=True)
-    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="provider_order")
-    message = models.TextField(blank=True)
-    budget = models.DecimalField(max_digits=10, decimal_places=2)
-    status = models.CharField(max_length=20, choices=OrderRequestStatus.choices, default=OrderRequestStatus.PENDING)
-    updated_at = models.DateTimeField(auto_now=True)
+class OrderAttachment(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="order_attachments")
+    file = models.FileField(upload_to="order/file/", blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        ordering = ["-created_at"]
+
+class OrderChangesRequest(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="changes_requests")
+    request_by = models.CharField(max_length=20, default=UserDefault.CUSTOMER, choices=UserDefault.choices)
+    is_approved = models.BooleanField(default=False)
+    changes_type = models.CharField(max_length=30, choices=ChangesRequestType.choices, default=ChangesRequestType.AMOUNT)
+    changes_data = models.JSONField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 class ReviewAndRating(models.Model):
-    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="order_review")
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="order_review")
     customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, blank=True, null=True)
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, blank=True, null=True)
+    send_by = models.CharField(max_length=20, default=UserDefault.CUSTOMER, choices=UserDefault.choices)
+
     rating = models.IntegerField(choices=ReviewRatingChoice.choices, default=ReviewRatingChoice.FIVE)
     review = models.CharField(max_length=255, blank=True, null=True)
+    is_approved = models.BooleanField(default=False)
     created = models.DateTimeField(auto_now=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 class OrderRefundRequest(models.Model):
     order = models.OneToOneField(Order, on_delete=models.SET_NULL, related_name="refund_request", blank=True, null=True)
     customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, related_name="refund_requests", blank=True, null=True)
-    reason = models.TextField()
+    reason = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=RefundStatus.choices, default=RefundStatus.PENDING)
     refund_amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     admin_note = models.TextField(blank=True, null=True)
