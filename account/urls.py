@@ -1,16 +1,24 @@
 from django.urls import path, include
 from .views import (
-    PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView, HelperListViewset, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView, ProviderAddressUpdateView
+    UserAddressViews, ProviderVerificationViews, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView, ProviderAddressUpdateView, CurrentUserInfoView, CurrentUserHelperView, CreateUserHelperView
+)
+from .auth_views import (
+    PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, GoogleLoginAPIView, SignUpOTPResend
 )
 from rest_framework.routers import DefaultRouter
 
+
+# ============================================================================================================
 router = DefaultRouter()
+# user---------
 router.register(r"address", UserAddressViews, basename="user_address")
-router.register(r"helper", HelperListViewset, basename="helper")
-router.register(r'customer/payment-methods', CustomerPaymentMethodViewSet, basename='customer-payment')
+# provider-----
 router.register(r'provider/payout-methods', ProviderPayoutMethodViewSet, basename='provider-payout')
+# customer-----
+router.register(r'customer/payment-methods', CustomerPaymentMethodViewSet, basename='customer-payment')
 router.register(r"my-referrals", MyReferralViewSet, basename="my-referrals")
 router.register(r"my-vouchers", MyVoucherViewSet, basename="my-vouchers")
+# ============================================================================================================
 
 
 
@@ -21,26 +29,34 @@ urlpatterns = [
     path("token/otp/verify/", LoginOTPVerifyView.as_view(), name="login_otp_verify"),
     path("token/verify/", UpdateTokenVerifyView.as_view(), name="token-verify"),
     path("token/refresh/", UpdateTokenRefreshView.as_view(), name="token-refresh"),
+
     # Password Change & Reset---------------
     path("auth/password/change/", ChangePasswordView.as_view(), name="password-change"),
     path("auth/password/reset/", PasswordResetRequestView.as_view(), name="password-reset"),
     path("auth/password/reset-confirm/", PasswordResetConfirmView.as_view(), name="password-confirm"),
+
     # User Registration Route---------------
     # path("signup/otp/request/", SignUpOTPRequestView.as_view(), name="signup_otp_send"),
     # path("signup/otp/verify/", SignUpOTPVerifyView.as_view(), name="signup_otp_verify"),
     path("auth/signup/", SignUpViews.as_view(), name="signup"),
     path("auth/signup/verify/", UserSignUpOTPVerifyView.as_view(), name="signup-verify"),
+    path("auth/signup/resend/", SignUpOTPResend.as_view(), name="signup-otp-resend"),
 
     # Social Auth Login Start--------------
     path("auth/token/google/", GoogleLoginAPIView.as_view(), name="google-auth"),
     path("auth/token/apple/", GoogleLoginAPIView.as_view(), name="apple-auth"),
     # Social Auth Login End--------------
-    
-    path("current-user/", UserInfoView.as_view(), name="current_user_info"),
-    path("user/", include(router.urls)),
-    path("provider-verification/", ProviderVerificationViews.as_view(), name="provider-verification"),
+
+    # Current User URL----------------------
+    path("current-user/", CurrentUserInfoView.as_view(), name="current_user_info"),
+    path("helper-profile/", CurrentUserHelperView.as_view(), name="user-helper-profile"),
+    path("create-helper-profile/", CreateUserHelperView.as_view(), name="create-helper-profile"),
     path("provider-address-update/", ProviderAddressUpdateView.as_view(), name="provider-address-update"),
     path("user/language/", UserDefaultLanguage.as_view(), name="user-language"),
+    path("provider-verification/", ProviderVerificationViews.as_view(), name="provider-verification"),
+
+    
+    path("user/", include(router.urls)),
 
     # Referral & Voucher Section---------
     path("vouchers/apply/", ApplyVoucherView.as_view(), name="apply-voucher"),

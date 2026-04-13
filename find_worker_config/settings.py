@@ -31,7 +31,7 @@ INSTALLED_APPS = [
     'encrypted_model_fields',
 
     # custom app
-    'account', 'chat_notify', 'task', 'core',
+    'account', 'chat_notify', 'core', 'job', 'task'
     
 ]
 

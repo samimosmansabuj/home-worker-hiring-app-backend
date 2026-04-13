@@ -35,7 +35,6 @@ class ServiceSubCategory(models.Model):
 
 class Order(models.Model):
     category = models.ForeignKey(ServiceCategory, on_delete=models.SET_NULL, related_name="orders", blank=True, null=True)
-    subcategory = models.ForeignKey(ServiceSubCategory, on_delete=models.SET_NULL, related_name="orders", blank=True, null=True)
     customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, related_name="orders_as_customer", blank=True, null=True)
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, related_name="orders_as_provider", blank=True, null=True)
     
@@ -60,6 +59,9 @@ class Order(models.Model):
         related_query_name="order"
     )
     
+    accepted_at = models.DateTimeField(blank=True, null=True)
+    started_at = models.DateTimeField(blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

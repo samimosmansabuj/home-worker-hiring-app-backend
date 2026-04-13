@@ -18,8 +18,11 @@ urlpatterns = [
     # include APP Urls File==========
     path("api/v1/", include("account.urls")),
     path("api/v1/", include("chat_notify.urls")),
-    path("api/v1/", include("task.urls")),
+    path("api/v1/", include("job.urls")),
     path("api/v1/", include("core.urls")),
+    
+    # remove after complete job app-----
+    path("api/v1/", include("task.urls")),
 ]
 
 SERVE_MEDIA = os.getenv("SERVE_MEDIA", "False").strip().lower() in ("true","1","yes")

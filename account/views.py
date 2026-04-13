@@ -1,41 +1,31 @@
-import json
-import math
-import math
 from django.shortcuts import render, get_object_or_404
 from rest_framework.response import Response
-from rest_framework.generics import RetrieveUpdateDestroyAPIView, UpdateAPIView
+from rest_framework.generics import RetrieveUpdateDestroyAPIView, CreateAPIView, GenericAPIView
 from rest_framework.views import APIView
-from rest_framework import status, permissions
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenVerifyView, TokenRefreshView
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework.request import Request
-from rest_framework.exceptions import ValidationError
-from django.utils import timezone
-from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher
+from rest_framework import status
+from rest_framework.exceptions import NotFound, ValidationError
+from .models import User, Address, CustomerProfile, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher
 from .serializers import (
-    LoginOTPRequestSerializer, LoginOTPVerifySerializer, ProviderSerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer
+    UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer
 )
 from core.models import AddOfferVoucher
 from .utils import generate_otp, KYCVerificationService
 from django.db.models import Q
-from math import radians, cos, sin, asin, sqrt
-from find_worker_config.permissions import IsCustomer, IsValidFrontendRequest
-from find_worker_config.model_choice import OTPType, UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
+
+from find_worker_config.model_choice import UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
 from .models import User, OTP, ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
-from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.permissions import IsAuthenticated
 from find_worker_config.utils import LogActivityModule
 from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth import get_user_model
-from urllib.parse import urlparse
-from django.core.files.base import ContentFile
+
+
 from rest_framework.decorators import action
 User = get_user_model()
-import requests
-import os
+
 
 
 
@@ -49,679 +39,11 @@ class WelComeAPI(APIView):
             }, status=status.HTTP_200_OK
         )
 
-class PasswordLoginViews(TokenObtainPairView):
-    serializer_class = CustomTokenObtainPairSerializer
-    def create_log(self, user, action, entity, metadata={}):
-        # user, action, entity, metadata, request
-        data = {
-            "user": user,
-            "action": action,
-            "entity": entity,
-            "request": self.request,
-            "metadata": {"login_method": "password"}
-        }
-        log = LogActivityModule(data)
-        log.create()
-
-    def post(self, request: Request, *args, **kwargs):
-        try:
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            user = serializer.get_user()
-            self.create_log(user, "New Login", user)
-            data = serializer.validated_data
-            data["default_profile"] = user.default_profile
-            return Response(
-                {
-                    "status": True,
-                    "data": data
-                }, status=status.HTTP_200_OK
-            )
-        except ValidationError:
-            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-
-# Login With OTP Start===========================
-class LoginOTPRequestView(APIView):
-    def post(self, request):
-        try:
-            serializer = LoginOTPRequestSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            return Response(
-                {
-                    "status": True,
-                    "message": "OTP sent",
-                    "data": serializer.create_otp_object()
-                }, status=status.HTTP_200_OK
-            )
-        except ValidationError:
-            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-
-class LoginOTPVerifyView(APIView):
-    def get_otp_object(self, data):
-        otp = data.get("otp")
-        email = data.get("email")
-        phone = data.get("phone")
-
-        query = Q(code=otp, is_used=False, purpose=OTPType.LOGIN)
-        if phone:
-            query &= Q(phone=phone)
-        if email:
-            query &= Q(email=email)
-        otp_object = OTP.objects.filter(query).last()
-
-        if not otp_object:
-            raise Exception("Invalid OTP")
-
-        if otp_object.is_expired():
-            raise Exception("OTP expired")
-
-        otp_object.is_used = True
-        otp_object.save(update_fields=["is_used"])
-        return otp_object
-
-    def create_log(self, user, action, entity, metadata={}):
-        data = {
-            "user": user,
-            "action": action,
-            "entity": entity,
-            "request": self.request,
-            "metadata": {"login_method": "OTP Login"}
-        }
-        log = LogActivityModule(data)
-        log.create()
-    
-    def post(self, request):
-        try:
-            with transaction.atomic():
-                serializer = LoginOTPVerifySerializer(data=request.data)
-                serializer.is_valid(raise_exception=True)
-                otp = self.get_otp_object(serializer.validated_data)
-                self.create_log(otp.user, "New Login", otp.user)
-                return Response(
-                    {
-                        "status": True,
-                        "data": serializer.authenticated(otp.user)
-                    }, status=status.HTTP_200_OK
-                )
-        except ValidationError:
-            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-# Login With OTP End===========================
-
-# SignUp With OTP Start===========================
-class SignUpOTPRequestView(APIView):
-    def get_otp_object(self, data):
-        otp = generate_otp(6)
-        email = data.get("email", None)
-        phone = data.get("phone", None)
-        if email and User.objects.filter(email=email).exists():
-            raise Exception("Email Already Taken!")
-        if phone and User.objects.filter(phone=phone).exists():
-            raise Exception("Phone Already Taken!")
-        otp_obj = OTP.objects.create(
-            phone=phone,
-            email=email,
-            code=otp,
-            purpose=OTPType.SIGNUP
-        )
-        return otp_obj
-
-    def get_response(self, otp_object: OTP):
-        if otp_object.phone is not None:
-            return {"phone": otp_object.phone}
-        elif otp_object.email is not None:
-            return {"email": otp_object.email}
-
-    def post(self, request):
-        try:
-            serializer = SignUpOTPRequestSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            otp_object = self.get_otp_object(serializer.validated_data)
-            return Response(
-                {
-                    "status": True,
-                    "message": "OTP sent",
-                    "data": self.get_response(otp_object)
-                }, status=status.HTTP_200_OK
-            )
-        except ValidationError:
-            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-
-class SignUpOTPVerifyView(APIView):
-    def get_otp_object(self, data):
-        otp = data.get("otp")
-        email = data.get("email")
-        phone = data.get("phone")
-
-        query = Q(code=otp, is_used=False, purpose=OTPType.SIGNUP)
-        if phone:
-            query &= Q(phone=phone)
-        if email:
-            query &= Q(email=email)
-        otp_object = OTP.objects.filter(query).last()
-
-        if not otp_object:
-            raise Exception("Invalid OTP")
-
-        if otp_object.is_expired():
-            raise Exception("OTP expired")
-
-        otp_object.is_used = True
-        otp_object.save(update_fields=["is_used"])
-        return otp_object
-    
-    def get_and_create_user(self, otp_object: OTP):
-        if otp_object.phone:
-            user, created = User.objects.get_or_create(
-                phone=otp_object.phone, role=UserRole.USER, is_phone_verified=True
-            )
-        elif otp_object.email:
-            user, created = User.objects.get_or_create(
-                email=otp_object.email, role=UserRole.USER, is_email_verified=True
-            )
-        else:
-            raise Exception("User not created, somethings wrong!")
-        otp_object.user = user
-        otp_object.save(update_fields=["user"])
-        return user
-
-    def post(self, request):
-        try:
-            serializer = SignUpOTPVerifySerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            otp_obj = self.get_otp_object(serializer.validated_data)
-            user = self.get_and_create_user(otp_obj)
-            return Response(
-                {
-                    "status": True,
-                    "data": serializer.authenticated(user)
-                }, status=status.HTTP_200_OK
-            )
-        except ValidationError:
-            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-# -------------------------------------------------
-class SignUpViews(APIView):
-    def post(self, request, *args, **kwargs):
-        try:
-            serializer = SignupSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            email = serializer.send_code()
-            return Response(
-                {
-                    "status": True,
-                    "message": "OTP send to your email address.",
-                    "data": email
-                }, status=status.HTTP_200_OK
-            )
-        except ValidationError:
-            error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            return Response(
-                {
-                    'status': False,
-                    'message': error,
-                },status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                },status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-class UserSignUpOTPVerifyView(APIView):
-    def create_log(self, user, action, entity, metadata={}):
-        data = {
-            "user": user,
-            "action": action,
-            "entity": entity,
-            "request": self.request,
-            "metadata": {"login_method": "User Registration & Verify"}
-        }
-        log = LogActivityModule(data)
-        log.create()
-    
-    def post(self, request):
-        try:
-            with transaction.atomic():
-                serializer = SignUpOTPVerifySerializer(data=request.data)
-                serializer.is_valid(raise_exception=True)
-                otp_obj = get_otp_object(serializer.validated_data, OTPType.SIGNUP)
-                user = otp_obj.user
-                if not user:
-                    raise Exception("Not get user using this OTP.")
-                user.is_email_verified=True
-                user.save()
-                self.create_log(user, "New Registration & Verify", user)
-            return Response(
-                {
-                    "status": True,
-                    "data": serializer.authenticated(user)
-                }, status=status.HTTP_200_OK
-            )
-        except ValidationError:
-            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-
-# SignUp With OTP End===========================
-
-
-
-
-# =================================================================
-# Social Auth Login System Views Start---------------
-class GoogleLoginAPIView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def google_response(self, access_token: str) -> dict:
-        response = requests.get(
-            "https://oauth2.googleapis.com/tokeninfo",
-            # "https://www.googleapis.com/oauth2/v3/userinfo",
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=5
-        )
-        if response.status_code != 200:
-            raise Exception("Invalid Google token")
-        google_data = response.json()
-        return google_data
-    
-    def save_google_profile_photo(self, user: object, picture_url: str) -> bool:
-        response = requests.get(picture_url, timeout=10)
-        if response.status_code != 200:
-            return
-        filename = f"user_{user.id}_google.jpg"
-        user.photo.save(filename, ContentFile(response.content), save=True)
-        return True
-
-    def get_user(self, google_data: dict) -> object:
-        email = google_data.get("email")
-        first_name = google_data.get("given_name", "")
-        last_name = google_data.get("family_name", "")
-        picture = google_data.get("picture", "")
-
-        if not email:
-            raise Exception("Email not available.")
-
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                "first_name": first_name,
-                "last_name": last_name
-            }
-        )
-
-        if created and not user.phone and picture:
-            self.save_google_profile_photo(user, picture)
-
-        return user
-
-    def post(self, request):
-        try:
-            with transaction.atomic():
-                access_token = request.data.get('access_token')
-
-                if not access_token:
-                    raise Exception("access_token is required")
-                
-                google_data = self.google_response(access_token)
-
-                user = self.get_user(google_data)
-                refresh = RefreshToken.for_user(user)
-                return Response(
-                    {
-                        "status": True,
-                        "data": {
-                            "access": str(refresh.access_token),
-                            "refresh": str(refresh),
-                            "default_profile": user.default_profile
-                        }
-                    }, status=status.HTTP_200_OK
-                )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }
-            )
-
-class AppleLoginAPIView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def google_response(self, access_token: str) -> dict:
-        response = requests.get(
-            "https://oauth2.googleapis.com/tokeninfo",
-            # "https://www.googleapis.com/oauth2/v3/userinfo",
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=5
-        )
-        if response.status_code != 200:
-            raise Exception("Invalid Google token")
-        google_data = response.json()
-
-        # if data.get("aud") != settings.GOOGLE_CLIENT_ID:
-        #     raise Exception("Token audience mismatch")
-
-        return google_data
-    
-    def save_google_profile_photo(self, user: object, picture_url: str) -> bool:
-        response = requests.get(picture_url, timeout=10)
-        if response.status_code != 200:
-            return
-        filename = f"user_{user.id}_google.jpg"
-        user.photo.save(filename, ContentFile(response.content), save=True)
-        return True
-
-    def get_user(self, google_data: dict) -> object:
-        email = google_data.get("email")
-        first_name = google_data.get("given_name", "")
-        last_name = google_data.get("family_name", "")
-        picture = google_data.get("picture", "")
-
-        if not email:
-            raise Exception("Email not available.")
-
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                "first_name": first_name,
-                "last_name": last_name
-            }
-        )
-
-        if created and not user.phone and picture:
-            self.save_google_profile_photo(user, picture)
-
-        return user
-
-    def post(self, request):
-        try:
-            with transaction.atomic():
-                access_token = request.data.get('access_token')
-
-                if not access_token:
-                    raise Exception("access_token is required")
-                
-                google_data = self.google_response(access_token)
-
-                user = self.get_user(google_data)
-                refresh = RefreshToken.for_user(user)
-                return Response(
-                    {
-                        "status": True,
-                        "data": {
-                            "access": str(refresh.access_token),
-                            "refresh": str(refresh),
-                        }
-                    }, status=status.HTTP_200_OK
-                )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }
-            )
-
-
-# Social Auth Login System Views END---------------
-# =================================================================
-
-
-
-# Token & Password Start=================================
-class UpdateTokenVerifyView(TokenVerifyView):
-    def post(self, request: Request, *args, **kwargs) -> Response:
-        try:
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            return Response(
-                {
-                    "status": False,
-                    "message": "Token Valid!"
-                }, status=status.HTTP_200_OK
-            )
-        except ValidationError:
-            error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-
-class UpdateTokenRefreshView(TokenRefreshView):
-    def post(self, request: Request, *args, **kwargs) -> Response:
-        try:
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            return Response(
-                {
-                    "status": True,
-                    "data": serializer.validated_data
-                }, status=status.HTTP_200_OK
-            )
-        except ValidationError:
-            error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-
-
-class ChangePasswordView(APIView):
-    permission_classes = [IsAuthenticated]
-    def create_log(self):
-        data = {
-            "user": self.request.user,
-            "action": "Password Change",
-            "entity": self.request.user,
-            "request": self.request,
-            "metadata": {},
-            "for_notify": True
-        }
-        log = LogActivityModule(data)
-        log.create()
-    
-    def post(self, request):
-        try:
-            with transaction.atomic():
-                serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
-                serializer.is_valid(raise_exception=True)
-                serializer.set_password()
-                self.create_log()
-                return Response(
-                    {
-                        "status": True,
-                        "message": "Password changed successfully"
-                    },
-                    status=status.HTTP_200_OK
-                )
-        except ValidationError:
-            error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-class PasswordResetRequestView(APIView):
-    def post(self, request):
-        try:
-            serializer = PasswordResetRequestSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            send_to = serializer.send_code()
-            return Response(
-                {
-                    "status": True,
-                    "message": "OTP send for reset your password.",
-                    "send_to": send_to
-                },
-                status=status.HTTP_200_OK
-            )
-        except ValidationError:
-            error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-class PasswordResetConfirmView(APIView):
-    def post(self, request):
-        try:
-            serializer = PasswordResetConfirmSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            otp = get_otp_object(serializer.validated_data, OTPType.RESET_PASSWORD)
-            serializer.set_new_password(otp.user)
-            return Response(
-                {
-                    "status": True,
-                    "message": "Password Reset Sucessfully.",
-                },
-                status=status.HTTP_200_OK
-            )
-        except ValidationError:
-            error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-# Token & Password End=================================
-
-
 
 # User Info Current ===========================
-class UserInfoView(RetrieveUpdateDestroyAPIView):
-    permission_classes = [permissions.IsAuthenticated]
-    serializer_class = UserInfoSerializer
+class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CurrentUserInfoSerializer
 
     def create_log(self):
         data = {
@@ -745,13 +67,20 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
             if not ServiceProviderProfile.objects.filter(user=user).exists() and not user.default_profile:
                 user.default_profile = UserDefault.CUSTOMER
         elif user_mode == UserDefault.PROVIDER:
-            profile, _ = ServiceProviderProfile.objects.get_or_create(user=user)
+            profile = get_object_or_404(ServiceProviderProfile, user=user)
+            if not profile:
+                raise Exception("Helper Profile Not Created!")
             if not CustomerProfile.objects.filter(user=user).exists() and not user.default_profile:
                 user.default_profile = UserDefault.PROVIDER
         else:
             return None
         user.save(update_fields=["default_profile"])
         return profile
+    
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
     
     def retrieve(self, request, *args, **kwargs):
         user_mode = request.query_params.get("user_mode")
@@ -760,22 +89,16 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
         return Response(
             {
                 'status': True,
-                'data': self.get_serializer(instance, context={"user_mode": user_mode, "request": request}).data
+                'data': self.get_serializer(instance).data
             }, status=status.HTTP_200_OK
         )
-    
+
     def update(self, request, *args, **kwargs):
-        user_mode = request.query_params.get("user_mode")
         try:
             with transaction.atomic():
-                self.get_user_mode_profile(user_mode)
                 partial = kwargs.pop('partial', False)
                 instance = self.get_object()
-                serializer = UserInfoSerializer(
-                    instance, data=request.data, partial=partial, context={
-                        "user_mode": user_mode, "request": request
-                    }
-                )
+                serializer = self.get_serializer(instance, data=request.data, partial=partial)
                 serializer.is_valid(raise_exception=True)
                 self.perform_update(serializer)
 
@@ -798,11 +121,130 @@ class UserInfoView(RetrieveUpdateDestroyAPIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
 
+class CurrentUserHelperView(RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CurrentUserHelperSerializer
+
+    def create_log(self):
+        data = {
+            "user": self.request.user,
+            "action": "Helper Profile Update",
+            "entity": self.request.user.service_provider_profile,
+            "request": self.request,
+            "metadata": {}
+        }
+        log = LogActivityModule(data)
+        log.create()
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
+    
+    def get_object(self):
+        user = self.request.user
+        try:
+            return ServiceProviderProfile.objects.get(user=user)
+        except ServiceProviderProfile.DoesNotExist:
+            raise NotFound(detail="Helper Profile Not Created")
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        return Response(
+            {
+                'status': True,
+                'data': self.get_serializer(instance).data
+            }, status=status.HTTP_200_OK
+        )
+
+    def update(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                partial = kwargs.pop('partial', False)
+                instance = self.get_object()
+                serializer = self.get_serializer(instance, data=request.data, partial=partial)
+                serializer.is_valid(raise_exception=True)
+                self.perform_update(serializer)
+
+                if getattr(instance, '_prefetched_objects_cache', None):
+                    instance._prefetched_objects_cache = {}
+                
+                self.create_log()
+                return Response(
+                    {
+                        "status": True,
+                        "data": serializer.data
+                    }
+                )
+        except ValidationError as e:
+            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+class CreateUserHelperView(CreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CurrentUserHelperSerializer
+
+    def create_log(self):
+        data = {
+            "user": self.request.user,
+            "action": "Helper Profile Created",
+            "entity": self.request.user.service_provider_profile,
+            "request": self.request,
+            "metadata": {}
+        }
+        log = LogActivityModule(data)
+        log.create()
+
+    def get_object(self):
+        user = self.request.user
+        if self.get_helper_profile(user):
+            raise Exception("Helper profile already created!")
+        return user
+    
+    def get_helper_profile(self, user):
+        if ServiceProviderProfile.objects.filter(user=user).exists():
+            return True
+        return False
+
+    def create(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                serializer = self.get_serializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                serializer.save(user=self.get_object())
+                self.create_log()
+                return Response(
+                    {
+                        "status": True,
+                        "data": serializer.data
+                    }
+                )
+        except ValidationError as e:
+            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
 class UserAddressViews(UpdateModelViewSet):
     model = Address
     queryset = Address.objects.all()
     serializer_class = UserAddressSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get_user(self):
         return self.request.user
@@ -1012,7 +454,6 @@ class MyReferralViewSet(UpdateReadOnlyModelViewSet):
     def get_queryset(self):
         return Referral.objects.filter(referrer=self.request.user) 
 # -------------------------------
-# -------------------------------
 # Voucher Views
 class MyVoucherViewSet(UpdateReadOnlyModelViewSet):
     serializer_class = VoucherSerializer
@@ -1062,15 +503,19 @@ class MyVoucherViewSet(UpdateReadOnlyModelViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
 # -------------------------------
-# -------------------------------
 # Apply Voucher (Important)
-class ApplyVoucherView(APIView):
+class ApplyVoucherView(GenericAPIView):
     serializer_class = ApplyVoucherSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
+
     def post(self, request):
         try:
-            serializer = self.serializer_class(data=request.data)
+            serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
 
             voucher = serializer.validated_data["voucher"]
@@ -1111,118 +556,6 @@ class ApplyVoucherView(APIView):
             )
 # -------------------------------
 # Referral & Voucher Views==================================
-
-
-# Buyer/Helper List for Customer/Client===================
-class HelperListViewset(UpdateReadOnlyModelViewSet):
-    queryset = User.objects.filter(
-        role=UserRole.USER,
-        status=UserStatus.ACTIVE,
-        service_provider_profile__isnull=False
-    ).select_related("service_provider_profile")
-    serializer_class = ProviderSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_serializer_context(self):
-        return {
-            "request": self.request
-        }
-    
-    def haversine(self, lat1, lon1, lat2, lon2):
-        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-        dlon = lon2 - lon1
-        dlat = lat2 - lat1
-        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-        c = 2 * asin(sqrt(a))
-        return round(6371 * c, 2)
-    
-    def get_map_distance(self, lat1, lon1, lat2, lon2):
-        api_key = os.getenv("GOOGLE_MAP_API_KEY")
-        url = f"https://maps.googleapis.com/maps/api/distancematrix/json"
-        params = {
-            "origins": f"{lat1},{lon1}",
-            "destinations": f"{lat2},{lon2}",
-            "key": api_key
-        }
-        response = requests.get(url, params=params)
-        print("Google Maps API Response:", response.text)  # Debug log
-        if response.status_code != 200:
-            return None
-        data = response.json()
-        try:
-            distance_text = data["rows"][0]["elements"][0]["distance"]["text"]
-            distance_value = float(distance_text.replace(" km", "").replace(",", ""))
-            return distance_value
-        except (KeyError, IndexError, ValueError):
-            return None
-
-    def get_queryset(self):
-        user = self.request.user
-        address = Address.objects.filter(user=user, is_default=True).first()
-        if not address:
-            return User.objects.none()
-        user_lat = address.lat
-        user_lng = address.lng
-
-        queryset = User.objects.filter(
-            role=UserRole.USER,
-            status=UserStatus.ACTIVE,
-            service_provider_profile__isnull=False
-        ).exclude(
-            id=user.id
-        ).select_related(
-            "service_provider_profile__office_location"
-        ).prefetch_related(
-            "service_provider_profile__service_category"
-        )
-
-        # ---- Query Params ----
-        category_id = self.request.query_params.get("category_id")
-        subcategory_id = self.request.query_params.get("subcategory_id")
-        min_rating = self.request.query_params.get("rating")
-        radius = self.request.query_params.get("radius")
-
-        # ---- Category Filter ----
-        if subcategory_id:
-            queryset = queryset.filter(
-                service_provider_profile__service_subcategory__id=subcategory_id
-            )
-        elif category_id:
-            queryset = queryset.filter(
-                service_provider_profile__service_category__id=category_id
-            )
-
-        # ---- Rating Filter ----
-        if min_rating:
-            queryset = queryset.filter(
-                service_provider_profile__rating__gte=float(min_rating)
-            )
-
-        # ---- Distance Calculation (ALWAYS attach) ----
-        providers_with_distance = []
-        for provider in queryset:
-            office = provider.service_provider_profile.office_location
-            if not office or not office.lat or not office.lng:
-                continue
-            distance = self.haversine(
-                user_lat,
-                user_lng,
-                office.lat,
-                office.lng
-            )
-            provider.distance_km = distance
-
-            # ---- Radius Filter ----
-            if radius:
-                if distance <= float(radius):
-                    providers_with_distance.append(provider)
-            else:
-                providers_with_distance.append(provider)
-
-        providers_with_distance.sort(key=lambda x: x.distance_km)
-        return providers_with_distance
-
-# Buyer/Helper List for Customer/Client===================
 
 
 

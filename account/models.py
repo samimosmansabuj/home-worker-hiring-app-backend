@@ -122,6 +122,8 @@ class ServiceProviderProfile(models.Model):
     # service_subcategory = models.ManyToManyField("task.ServiceSubCategory", blank=True)
 
     company_name = models.CharField(max_length=100, blank=True, null=True)
+    # email = models.EmailField(max_length=255, unique=True, blank=True,  null=True)
+    # phone = models.CharField(max_length=20, unique=True, blank=True,  null=True)
     logo = models.ImageField(upload_to="provider/logo/", blank=True, null=True)
     details = models.TextField(blank=True, null=True)
     office_location = models.ForeignKey("account.Address", on_delete=models.DO_NOTHING, blank=True, null=True)
