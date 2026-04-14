@@ -107,6 +107,11 @@ class OrderPaymentStatus(models.TextChoices):
     CANCELLED = "CANCELLED"
     REFUND = "REFUND"
 
+class OrderChangesRequestStatus(models.TextChoices):
+    ACCEPT = "ACCEPT"
+    DECLINED = "DECLINED"
+    NO_RESPONSE = "NO_RESPONSE"
+
 class ChangesRequestType(models.TextChoices):
     TIME = "TIME"
     DATE = "DATE"

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from django.db import models
 from account.models import User, CustomerProfile, ServiceProviderProfile
-from find_worker_config.model_choice import ChangesRequestType, OrderStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault
+from find_worker_config.model_choice import ChangesRequestType, OrderChangesRequestStatus, OrderStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault
 from django.db import transaction
 from django.contrib.contenttypes.fields import GenericRelation, GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -89,7 +89,7 @@ class OrderAttachment(models.Model):
 class OrderChangesRequest(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="changes_requests")
     request_by = models.CharField(max_length=20, default=UserDefault.CUSTOMER, choices=UserDefault.choices)
-    is_approved = models.BooleanField(default=False)
+    status = models.CharField(max_length=20, choices=OrderChangesRequestStatus.choices, default=OrderChangesRequestStatus.NO_RESPONSE)
     changes_type = models.CharField(max_length=30, choices=ChangesRequestType.choices, default=ChangesRequestType.AMOUNT)
     changes_data = models.JSONField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -189,4 +189,5 @@ class PaymentTransaction(models.Model):
 
 # ============= Payment transaction & Wallet Section End=============================
 # ==========================================================================================
+
 

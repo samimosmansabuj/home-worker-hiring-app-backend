@@ -1,7 +1,9 @@
 from rest_framework import serializers
 from account.models import ServiceProviderProfile, CustomerProfile
-from task.models import Order, OrderAttachment
+from task.models import Order, OrderAttachment, OrderChangesRequest
 from datetime import datetime
+from find_worker_config.model_choice import OrderChangesRequestStatus, OrderStatus, UserDefault, ChangesRequestType
+from django.db import transaction
 
 # helper list serializer---
 class ProviderSerializer(serializers.ModelSerializer):
@@ -91,10 +93,11 @@ class OrderSerializerAll(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = "__all__"
+        read_only_fields = ["status", "payment_status", "accepted_at", "started_at", "completed_at", "created_at", "updated_at"]
     
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        attachments_list = OrderAttachmentSerializer(instance.order_attachments, many=True).data
+        attachments_list = OrderAttachmentSerializer(instance.order_attachments, many=True, context=self.context).data
         data["attachments"] = attachments_list
         return data
 
@@ -127,4 +130,123 @@ class OrderSerializerAll(serializers.ModelSerializer):
         for file in attachments:
             OrderAttachment.objects.create(order=order, file=file)
         return order
+
+# =================================================================
+class CounterSerializer(serializers.Serializer):
+    budget = serializers.DecimalField(max_digits=9, decimal_places=2)
+    message = serializers.CharField(required=False)
+
+    def save(self, **kwargs):
+        budget = self.validated_data.get("budget")
+        message = self.validated_data.get("message")
+        order = kwargs.get("order")
+        profile_type = kwargs.get("profile_type")
+        if OrderChangesRequest.objects.filter(order=order, status=OrderChangesRequestStatus.NO_RESPONSE).exists():
+            raise ValueError("One Changes Request not response!")
+        elif OrderChangesRequest.objects.filter(order=order, request_by=profile_type, changes_type=ChangesRequestType.COUNTER).exists():
+            raise ValueError("Only One counter each side!")
+        with transaction.atomic():
+            OrderChangesRequest.objects.create(
+                order=order,
+                status=OrderChangesRequestStatus.ACCEPT,
+                request_by=profile_type,
+                changes_type=ChangesRequestType.COUNTER,
+                changes_data={
+                    "budget": f"{budget}",
+                    "message": message
+                }
+            )
+            order.amount = budget
+            order.save()
+            return order
+
+class SetHourSerializer(serializers.Serializer):
+    set_hour = serializers.IntegerField(required=True,error_messages={
+            "required": "Hour is required",
+            "invalid": "Hour must be a valid number",
+            "null": "Hour cannot be empty"
+        })
+    message = serializers.CharField(required=False)
+
+    def convert_hour_to_munite(self, hour):
+        return float(hour) * 60
+
+    def save(self, **kwargs):
+        available_status = [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]
+        hour = self.validated_data.get("set_hour")
+        message = self.validated_data.get("message")
+        order = kwargs.get("order")
+        if order.status not in available_status:
+            raise ValueError(f"Set Hour not accept when order is {order.status}")
+        
+        with transaction.atomic():
+            OrderChangesRequest.objects.create(
+                order=order,
+                status=OrderChangesRequestStatus.ACCEPT,
+                request_by=UserDefault.PROVIDER,
+                changes_type=ChangesRequestType.SET_HOUR,
+                changes_data={
+                    "budget": f"{hour}",
+                    "message": message
+                }
+            )
+            order.working_hour = self.convert_hour_to_munite(hour)
+            order.save(update_fields=["working_hour"])
+            return order
+
+class ProposeNewTimeSerializer(serializers.Serializer):
+    date = serializers.DateField(required=False)
+    time = serializers.TimeField(required=False)
+    message = serializers.CharField(required=False)
+
+    def get_data(self, order, profile_type):
+        date = self.validated_data.get("date", None)
+        time = self.validated_data.get("time", None)
+        message = self.validated_data.get("message", None)
+        data = {
+            "order": order,
+            "status": OrderChangesRequestStatus.NO_RESPONSE,
+            "request_by": profile_type
+        }
+        if date and time:
+            response_message = "Time and Date Changes Request Send!"
+            data["changes_type"] = ChangesRequestType.TIME_AND_DATE
+            data["changes_data"] = {
+                "date": date,
+                "time": time,
+                "message": message
+            }
+        elif date:
+            response_message = "Date Changes Request Send!"
+            data["changes_type"] = ChangesRequestType.DATE
+            data["changes_data"] = {
+                "date": date,
+                "message": message
+            }
+        elif time:
+            response_message = "Time Changes Request Send!"
+            data["changes_type"] = ChangesRequestType.TIME
+            data["changes_data"] = {
+                "time": time,
+                "message": message
+            }
+        else:
+            raise ValueError("Time or date must be submit!")
+        return data, response_message
+
+    def save(self, **kwargs):
+        order = kwargs.get("order")
+        profile_type = kwargs.get("profile_type")        
+        data, response_message = self.get_data(order,  profile_type)
+        with transaction.atomic():
+            OrderChangesRequest.objects.create(**data)
+            return response_message
+
+class ProposeNewTimeActionSerializer(serializers.Serializer):
+    status = serializers.CharField(required=True)
+    request_id = serializers.IntegerField(required=True, write_only=True)
+
+
+# ==================================================================
+
 

@@ -1,10 +1,10 @@
 from django.shortcuts import render
-from .serializers import ProviderSerializer
+from .serializers import CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, ProviderSerializer, SetHourSerializer
 from account.models import Address, User, ServiceProviderProfile
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
-from find_worker_config.utils import UpdateReadOnlyModelViewSet, UpdateModelViewSet
+from find_worker_config.utils import LogActivityModule, UpdateReadOnlyModelViewSet, UpdateModelViewSet, PaymentTransactionModule
 from task.models import Order
 from .serializers import OrderSerializerAll
 from django.db import transaction
@@ -15,6 +15,10 @@ from math import radians, cos, sin, asin, sqrt
 from django.db.models import Q
 from rest_framework.generics import CreateAPIView
 from .paginations import HelperPagination
+from find_worker_config.model_choice import UserDefault, OrderStatus, PaymentTransactionType, PaymentAction, OrderPaymentStatus
+from rest_framework.decorators import action
+from django.utils import timezone
+
 
 # ============================================================
 # Buyer/Helper List for Customer/Client===================
@@ -209,26 +213,205 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializerAll
     permission_classes = [IsAuthenticated]
 
+    def create_log(self, action, entity=None, for_notify=False, user=None, metadata={}):
+        data = {
+            "user": user or self.request.user,
+            "action": action,
+            "entity": entity,
+            "request": self.request,
+            "for_notify": for_notify,
+            "metadata": metadata,
+        }
+        log = LogActivityModule(data)
+        log.create()
+
+    def get_serializer_context(self):
+        return {"request": self.request, "profile_type": UserDefault.CUSTOMER}
+
     def get_queryset(self):
         user = self.request.user
         return Order.objects.filter(customer=user.customer_profile)
     
+    @action(detail=True, methods=["post"])
+    def counter(self, request, *args, **kwargs):
+        serializer = CounterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = self.get_object()
+        serializer.save(
+            order=order, profile_type=UserDefault.CUSTOMER
+        )
+        return Response(
+            {
+                "status": True,
+                "message": "Counter Offer Sent"
+            }, status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=["get"])
+    def accept(self, request, *args, **kwargs):
+        order = self.get_object()
+        if order.status != OrderStatus.PENDING:
+            raise ValueError(f"Order already {order.status}.")
+        elif order.status == OrderStatus.ACCEPT:
+            raise ValueError("Order already accept.")
+        order.status = OrderStatus.ACCEPT
+        order.accepted_at = timezone.localtime(timezone.now())
+        order.save()
+        return Response(
+            {
+                "status": True,
+                "message": "Order accept and awaiting for payment."
+            }, status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=["get"], url_path="pay-and-confirm")
+    def pay_and_confirm(self, request, *args, **kwargs):
+        try:
+            order = self.get_object()
+
+            # Error Handling, Permission and Acceptance For Payment
+            if order.payment_transactions.filter(type=PaymentTransactionType.CREDIT, action=PaymentAction.ORDER_PAYMENT).exists():
+                return Response(
+                    {"status": False, "message": "Duplicate payment detected."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if order.status == OrderStatus.CONFIRM and order.payment_status == OrderPaymentStatus.PAID:
+                raise Exception("The order is already confirm!")
+            if not (order.status == OrderStatus.ACCEPT and order.payment_status == OrderPaymentStatus.UNPAID):
+                return Response(
+                    {"status": False, "message": "Only accept and Unpaid order can payment to confirm!"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            with transaction.atomic():
+                # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+                # Here Code for Payment Process and Build Logic
+                # payment_information = payment information value json
+                # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+                # Payment Transaction----
+                payment = PaymentTransactionModule(
+                    user=request.user,
+                    amount=order.amount,
+                    reference_object=order,
+                    type=PaymentTransactionType.CREDIT,
+                    action=PaymentAction.ORDER_PAYMENT
+                )
+                payment.payment_transaction()
+                
+                # Order update After payment transanction-------
+                order.status = OrderStatus.CONFIRM
+                order.payment_status = OrderPaymentStatus.PAID
+                order.save(update_fields=["status", "payment_status"])
+                self.create_log(
+                    "Order Payment Complete", entity=order, for_notify=True, user=order.customer.user,
+                    metadata={"reference_user_id": order.provider.user.id}
+                )
+                self.create_log(
+                    "Order Confirm", entity=order, for_notify=True, user=order.provider.user,
+                    metadata={"reference_user_id": order.customer.user.id}
+                )
+                return Response(
+                    {"status": True, "message": "Order pay and confirm!"},
+                    status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(
+                {"status": False, "message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
     def create(self, request, *args, **kwargs):
         return Response(
             {
                 "status": True,
-                "message": "Post method not allowed!"
+                "message": "Create method not allowed!"
             }, status=status.HTTP_405_METHOD_NOT_ALLOWED
         )
+    
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {
+                "status": True,
+                "message": "Update method not allowed!"
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    
 
 class ProviderOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializerAll
     permission_classes = [IsAuthenticated]
 
+    def get_serializer_context(self):
+        return {"request": self.request, "profile_type": UserDefault.PROVIDER}
+
     def get_queryset(self):
         user = self.request.user
         return Order.objects.filter(provider=user.service_provider_profile)
     
+    @action(detail=True, methods=["post"])
+    def counter(self, request, *args, **kwargs):
+        serializer = CounterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = self.get_object()
+        serializer.save(
+            order=order, profile_type=UserDefault.PROVIDER
+        )
+        return Response(
+            {
+                "status": True,
+                "message": "Counter Offer Sent"
+            }, status=status.HTTP_200_OK
+        )
+    
+    @action(detail=True, methods=["get"])
+    def accept(self, request, *args, **kwargs):
+        order = self.get_object()
+        if order.status != OrderStatus.PENDING:
+            raise ValueError(f"Order already {order.status}.")
+        elif order.status == OrderStatus.ACCEPT:
+            raise ValueError("Order already accept.")
+        order.status = OrderStatus.ACCEPT
+        order.accepted_at = timezone.localtime(timezone.now())
+        order.save()
+        return Response(
+            {
+                "status": True,
+                "message": "Order accept and awaiting for payment."
+            }, status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=["post"], url_path="set-work-hour")
+    def set_work_hour(self, request, *args, **kwargs):
+        serializer = SetHourSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(order=self.get_object())
+        return Response(
+            {
+                "status": True,
+                "message": f"{serializer.validated_data.get("set_hour")} Hour Set for complete the work!"
+            }, status=status.HTTP_200_OK
+        )
+    
+    @action(detail=True, methods=["post"], url_path="propose-new-time")
+    def propose_new_time(self, request, *args, **kwargs):
+        data = request.data
+        action = data.pop("action", None)
+        if action == "create":
+            serializer = ProposeNewTimeSerializer(data=request.data)
+        elif action == "update":
+            serializer = ProposeNewTimeActionSerializer(data=request.data)
+        else:
+            raise Exception("Action not mention!")
+        serializer.is_valid(raise_exception=True)
+        serializer.save(order=self.get_object(), profile_type=UserDefault.PROVIDER)
+        return Response(
+            {
+                "status": True,
+                "message": "Propose New Time Successfully!"
+            }, status=status.HTTP_200_OK
+        )
+
     def create(self, request, *args, **kwargs):
         return Response(
             {
@@ -237,5 +420,12 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             }, status=status.HTTP_405_METHOD_NOT_ALLOWED
         )
 
-
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {
+                "status": True,
+                "message": "Update method not allowed!"
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    
 
