@@ -81,7 +81,6 @@ class OrderAttachmentSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(file.url) if request else file.url
         return None
 
-
 class OrderSerializerAll(serializers.ModelSerializer):
     provider_id = serializers.IntegerField(write_only=True)
     attachments = serializers.ListField(
@@ -186,7 +185,7 @@ class SetHourSerializer(serializers.Serializer):
                 request_by=UserDefault.PROVIDER,
                 changes_type=ChangesRequestType.SET_HOUR,
                 changes_data={
-                    "budget": f"{hour}",
+                    "hour": f"{hour}",
                     "message": message
                 }
             )
@@ -212,22 +211,22 @@ class ProposeNewTimeSerializer(serializers.Serializer):
             response_message = "Time and Date Changes Request Send!"
             data["changes_type"] = ChangesRequestType.TIME_AND_DATE
             data["changes_data"] = {
-                "date": date,
-                "time": time,
+                "date": date.isoformat(),
+                "time": time.isoformat(),
                 "message": message
             }
         elif date:
             response_message = "Date Changes Request Send!"
             data["changes_type"] = ChangesRequestType.DATE
             data["changes_data"] = {
-                "date": date,
+                "date": date.isoformat(),
                 "message": message
             }
         elif time:
             response_message = "Time Changes Request Send!"
             data["changes_type"] = ChangesRequestType.TIME
             data["changes_data"] = {
-                "time": time,
+                "time": time.isoformat(),
                 "message": message
             }
         else:
@@ -236,17 +235,81 @@ class ProposeNewTimeSerializer(serializers.Serializer):
 
     def save(self, **kwargs):
         order = kwargs.get("order")
-        profile_type = kwargs.get("profile_type")        
+        profile_type = kwargs.get("profile_type")
+        if OrderChangesRequest.objects.filter(order=order, changes_type__in=[ChangesRequestType.TIME_AND_DATE, ChangesRequestType.DATE, ChangesRequestType.TIME], status=OrderChangesRequestStatus.NO_RESPONSE):
+            raise ValueError("Already send a request!")
         data, response_message = self.get_data(order,  profile_type)
         with transaction.atomic():
-            OrderChangesRequest.objects.create(**data)
-            return response_message
+            self.response_message = response_message
+            changes_request = OrderChangesRequest.objects.create(**data)
+            return changes_request
+    
+    def get_response_message(self):
+        return self.response_message
 
 class ProposeNewTimeActionSerializer(serializers.Serializer):
     status = serializers.CharField(required=True)
     request_id = serializers.IntegerField(required=True, write_only=True)
 
+    def get_response_message(self):
+        return self.response_message
+    
+    def order_update(self, order, changes_request):
+        if changes_request.changes_type == ChangesRequestType.TIME_AND_DATE:
+            changes_data = changes_request.changes_data
+            order.working_date = changes_data.get("date")
+            order.working_start_time = changes_data.get("time")
+            self.response_message = "Propose New Time & Date Accept!"
+        elif changes_request.changes_type == ChangesRequestType.DATE:
+            changes_data = changes_request.changes_data
+            order.working_date = changes_data.get("date")
+            self.response_message = "Propose New Date Accept!"
+        elif changes_request.changes_type == ChangesRequestType.TIME:
+            changes_data = changes_request.changes_data
+            order.working_start_time = changes_data.get("time")
+            self.response_message = "Propose New Time Accept!"
+        order.save()
+        return order
+    
+    def save(self, **kwargs):
+        order = kwargs.get("order")
+        request_id = self.validated_data.get("request_id", None)
+        profile_type = kwargs.get("profile_type")
+        changes_request = OrderChangesRequest.objects.get(id=request_id, order=order)
+        status = self.validated_data.get("status", None)
+        if changes_request.request_by == profile_type:
+            raise ValueError("You can't action your request.")
+        elif changes_request.status in [OrderChangesRequestStatus.ACCEPT, OrderChangesRequestStatus.DECLINED]:
+            raise ValueError(f"This request is alread {changes_request.status}")
+        
+        with transaction.atomic():
+            status = status.upper()
+            changes_request.status = status
+            changes_request.save()
+            if status == OrderChangesRequestStatus.ACCEPT:
+                order = self.order_update(order, changes_request)
+                return order
 
+class StartWorkSerializer(serializers.Serializer):
+    start = serializers.BooleanField(required=True)
+    address = serializers.CharField(required=False)
+    lat = serializers.FloatField(required=True)
+    lng = serializers.FloatField(required=True)
+
+    def work_start(self, **kwargs):
+        order = kwargs.get("order")
+        start = self.validated_data.get("start", None)
+        address = self.validated_data.get("address", None)
+        helper_lat = self.validated_data.get("lat", None)
+        helper_lng = self.validated_data.get("lng", None)
+
+        if start and helper_lat and helper_lng and order:
+            order_lat = order.lat
+            order_lng = order.lng
+            
+        else:
+            raise ValueError("Something wrong!")
+    
 # ==================================================================
 
 

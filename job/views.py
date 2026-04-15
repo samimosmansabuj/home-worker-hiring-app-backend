@@ -1,12 +1,11 @@
 from django.shortcuts import render
-from .serializers import CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, ProviderSerializer, SetHourSerializer
+from .serializers import CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, ProviderSerializer, SetHourSerializer, OrderSerializerAll, StartWorkSerializer
 from account.models import Address, User, ServiceProviderProfile
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from find_worker_config.utils import LogActivityModule, UpdateReadOnlyModelViewSet, UpdateModelViewSet, PaymentTransactionModule
-from task.models import Order
-from .serializers import OrderSerializerAll
+from task.models import Order, OrderRefundRequest
 from django.db import transaction
 import requests
 from rest_framework.exceptions import ValidationError, PermissionDenied
@@ -321,6 +320,59 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    @action(detail=True, methods=["post"], url_path="propose-new-time")
+    def propose_new_time(self, request, *args, **kwargs):
+        data = request.data
+        action = data.pop("action", None)
+        if action == "create":
+            serializer = ProposeNewTimeSerializer(data=request.data)
+        elif action == "update":
+            serializer = ProposeNewTimeActionSerializer(data=request.data)
+        else:
+            raise Exception("Action not mention!")
+        serializer.is_valid(raise_exception=True)
+        serializer.save(order=self.get_object(), profile_type=UserDefault.CUSTOMER)
+        return Response(
+            {
+                "status": True,
+                "message": serializer.get_response_message()
+            }, status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, *args, **kwargs):
+        order = self.get_object()
+        data = request.data
+        with transaction.atomic():
+            if order.status in [OrderStatus.PENDING, OrderStatus.ACCEPT] and order.payment_status == OrderPaymentStatus.UNPAID:
+                order.status = OrderStatus.CANCELLED
+                order.payment_status = OrderPaymentStatus.CANCELLED
+                response_message = "Order Cancelled"
+            elif order.status in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS] and order.payment_status == OrderPaymentStatus.PAID:
+                order.status = OrderStatus.REFUND_REQUEST
+                order.payment_status = OrderPaymentStatus.REFUND
+                OrderRefundRequest.objects.create(
+                    order=order,
+                    customer=order.customer,
+                    reason=data.pop("message", None),
+                    refund_amount=order.amount
+                )
+                response_message = "Order Cancelled & Refund Processing!"
+            else:
+                return Response(
+                    {
+                        "status": False,
+                        "message": f"Order already {order.payment_status}"
+                    }, status=status.HTTP_400_BAD_REQUEST
+                )
+            order.save()
+            return Response(
+                {
+                    "status": True,
+                    "message": response_message
+                }, status=status.HTTP_200_OK
+            )
+
     def create(self, request, *args, **kwargs):
         return Response(
             {
@@ -337,6 +389,13 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             }, status=status.HTTP_405_METHOD_NOT_ALLOWED
         )
     
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {
+                "status": True,
+                "message": "Delete method not allowed!"
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
 
 class ProviderOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializerAll
@@ -408,8 +467,54 @@ class ProviderOrderViewSet(UpdateModelViewSet):
         return Response(
             {
                 "status": True,
-                "message": "Propose New Time Successfully!"
+                "message": serializer.get_response_message()
             }, status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, *args, **kwargs):
+        order = self.get_object()
+        data = request.data
+        with transaction.atomic():
+            if order.status in [OrderStatus.PENDING, OrderStatus.ACCEPT] and order.payment_status == OrderPaymentStatus.UNPAID:
+                order.status = OrderStatus.CANCELLED
+                order.payment_status = OrderPaymentStatus.CANCELLED
+                response_message = "Order Cancelled"
+            elif order.status in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS] and order.payment_status == OrderPaymentStatus.PAID:
+                order.status = OrderStatus.REFUND_REQUEST
+                order.payment_status = OrderPaymentStatus.REFUND
+                OrderRefundRequest.objects.create(
+                    order=order,
+                    customer=order.customer,
+                    reason=data.pop("message", None),
+                    refund_amount=order.amount
+                )
+                response_message = "Order Cancelled & Refund Processing!"
+            else:
+                return Response(
+                    {
+                        "status": False,
+                        "message": f"Order already {order.payment_status}"
+                    }, status=status.HTTP_400_BAD_REQUEST
+                )
+            order.save()
+            return Response(
+                {
+                    "status": True,
+                    "message": response_message
+                }, status=status.HTTP_200_OK
+            )
+
+    @action(detail=True, methods=["post"], url_path="start-work")
+    def start_work(self, request, *args, **kwargs):
+        serializer = StartWorkSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.work_start(order=self.get_object())
+        return Response(
+            {
+                "status": True,
+                "message": "Work Started!"
+            }
         )
 
     def create(self, request, *args, **kwargs):
@@ -428,4 +533,10 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             }, status=status.HTTP_405_METHOD_NOT_ALLOWED
         )
     
-
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {
+                "status": True,
+                "message": "Delete method not allowed!"
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
