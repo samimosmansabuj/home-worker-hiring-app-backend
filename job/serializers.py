@@ -1,9 +1,12 @@
 from rest_framework import serializers
 from account.models import ServiceProviderProfile, CustomerProfile
-from task.models import Order, OrderAttachment, OrderChangesRequest
+from task.models import Order, OrderAttachment, OrderChangesRequest, ReviewAndRating
 from datetime import datetime
 from find_worker_config.model_choice import OrderChangesRequestStatus, OrderStatus, UserDefault, ChangesRequestType
 from django.db import transaction
+from account.utils import generate_otp
+from math import radians, cos, sin, asin, sqrt
+
 
 # helper list serializer---
 class ProviderSerializer(serializers.ModelSerializer):
@@ -296,20 +299,74 @@ class StartWorkSerializer(serializers.Serializer):
     lat = serializers.FloatField(required=True)
     lng = serializers.FloatField(required=True)
 
+    def is_within_100m(self, lat1, lon1, lat2, lon2):
+        lon1, lat1, lon2, lat2 = map(
+            radians, [lat1, lon1, lon2, lat2]
+        )
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        c = 2 * asin(sqrt(a))
+        distance_km = 6371 * c
+        distance_m = distance_km * 1000
+        return distance_m <= 100
+
     def work_start(self, **kwargs):
         order = kwargs.get("order")
         start = self.validated_data.get("start", None)
         address = self.validated_data.get("address", None)
         helper_lat = self.validated_data.get("lat", None)
         helper_lng = self.validated_data.get("lng", None)
-
         if start and helper_lat and helper_lng and order:
-            order_lat = order.lat
-            order_lng = order.lng
-            
+            with transaction.atomic():
+                order_lat = order.lat
+                order_lng = order.lng
+                is_near = self.is_within_100m(helper_lat, helper_lng, order_lat, order_lng)
+                if not is_near:
+                    raise ValueError("You are not under 100m at work space!")
+                order.status = OrderStatus.IN_PROGRESS
+                order.confirmation_OTP = generate_otp(6)
+                order.save(update_fields=["status", "confirmation_OTP"])
+                return order
         else:
             raise ValueError("Something wrong!")
+
+class CompleteSerializer(serializers.Serializer):
+    otp = serializers.CharField(required=True)
+
+    def complete(self, **kwargs):
+        order = kwargs.get("order")
+        otp = self.validated_data.get("otp", None)
+        if otp and order.confirmation_OTP == otp:
+            with transaction.atomic():
+                order.status = OrderStatus.COMPLETED
+                order.save(update_fields=["status"])
+                return order
+        else:
+            raise ValueError("OTP or Invalid OTP")
+
+class ReviewAndRatingSerializer(serializers.ModelSerializer):
+    review = serializers.CharField(required=True)
     
+    class Meta:
+        model = ReviewAndRating
+        fields = ["id", "order", "customer", "provider", "send_by", "rating", "review", "is_approved", "created", "updated_at"]
+        read_only_fields = ["id", "order", "customer", "provider", "send_by", "is_approved", "created", "updated_at"]
+    
+    def create(self, validated_data):
+        with transaction.atomic():
+            order = self.context.get("order")
+            send_by = self.context.get("send_by")
+            if not any(order and send_by):
+                raise ValueError("Somthing Wrong!")
+            if ReviewAndRating.objects.filter(order=order, send_by=send_by).filter():
+                raise ValueError("Your feedback already submited!")
+            validated_data["order"] = order
+            validated_data["customer"] = order.customer
+            validated_data["provider"] = order.provider
+            validated_data["send_by"] = send_by
+            return super().create(validated_data)
+
 # ==================================================================
 
 

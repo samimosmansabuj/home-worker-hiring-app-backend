@@ -156,7 +156,7 @@ class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
         order = self.get_object()
 
         if order.status != OrderStatus.CONFIRM:
-            raise ValidationError("Order must be confirmed")
+            raise ValueError("Order must be confirmed")
 
         order.status = OrderStatus.IN_PROGRESS
         order.confirmation_OTP = generate_otp(6)
