@@ -5,6 +5,8 @@ from .serializers import (
 )
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
 from .models import OTP
 from find_worker_config.model_choice import OTPType, UserRole
 from django.core.files.base import ContentFile
