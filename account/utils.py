@@ -1,9 +1,7 @@
-from rest_framework import serializers
-from find_worker_config.model_choice import OTPType, DocumentStatus
+from find_worker_config.model_choice import DocumentStatus
 from django.db.models import Q
 import string
 import secrets
-import cv2
 import re
 from passporteye import read_mrz
 from rapidfuzz import fuzz

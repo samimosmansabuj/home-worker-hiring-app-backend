@@ -4,7 +4,7 @@ from rest_framework.generics import RetrieveUpdateDestroyAPIView, CreateAPIView,
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
-from .models import User, Address, CustomerProfile, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher
+from .models import Address, CustomerProfile, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher
 from .serializers import (
     UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer
 )
@@ -13,7 +13,7 @@ from .utils import generate_otp, KYCVerificationService
 from django.db.models import Q
 
 from find_worker_config.model_choice import UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
-from .models import User, OTP, ProviderVerification
+from .models import ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
 from rest_framework.permissions import IsAuthenticated

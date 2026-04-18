@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import User, CustomerProfile, ServiceProviderProfile, Address, OTP, ActivityLog, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod
-from unfold.admin import ModelAdmin
+# from unfold.admin import ModelAdmin
 from django.contrib import admin
 
 # @admin.register(User)

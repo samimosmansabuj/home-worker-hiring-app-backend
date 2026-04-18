@@ -1,6 +1,5 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
-from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Q
 from find_worker_config.model_choice import  DateStatus, DayStatus, HelperSlotExceptionType, HelperStatus, UserRole, UserLanguage, UserStatus, PaymentMethodType, PayoutMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay

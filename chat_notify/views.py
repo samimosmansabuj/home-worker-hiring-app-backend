@@ -1,14 +1,12 @@
-from rest_framework import viewsets, status, mixins
+from rest_framework import status
 from .serializers import ChatRoomSerializer, ChatMessageSerializer, MessageAttachmentSerializer, RoomStartSerializer, NotificationSerializer
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
 from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404, redirect
-from account.models import User
 from .models import ChatMessage, ChatRoom, Attachment, Notification
 from find_worker_config.utils import UpdateModelViewSet
-from rest_framework.viewsets import ReadOnlyModelViewSet
 
 
 class ChatRoomViewsets(UpdateModelViewSet):

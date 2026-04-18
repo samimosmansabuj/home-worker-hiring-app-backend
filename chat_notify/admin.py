@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import ChatRoom, ChatMessage, Attachment, Notification
-from unfold.admin import ModelAdmin
+# from unfold.admin import ModelAdmin
 
 # @admin.register(ChatMessage)
 # class ChatMessageAdmin(ModelAdmin):

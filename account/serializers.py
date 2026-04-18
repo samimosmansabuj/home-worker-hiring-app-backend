@@ -6,12 +6,11 @@ from .models import User, OTP, Address, CustomerProfile, ServiceProviderProfile,
 from .utils import generate_otp
 from find_worker_config.model_choice import OTPType, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
 from django.core.exceptions import ObjectDoesNotExist
-from find_worker_config.model_choice import UserRole, UserDefault
+from find_worker_config.model_choice import UserRole
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.exceptions import ValidationError
 from django.core.mail import send_mail
-from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta

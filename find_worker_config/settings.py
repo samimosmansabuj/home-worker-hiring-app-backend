@@ -95,46 +95,46 @@ CORS_ORIGIN_ALLOW_ALL = True
 # ================================================================================
 
 
-UNFOLD = {
-    "SITE_TITLE": "Worker Hiring Admin",
-    "NAVIGATION": [
-        {
-            "title": "User Management",
-            "items": [
-                {"title": "Users", "link": "/admin/account/user/"},
-                {"title": "Providers", "link": "/admin/account/serviceproviderprofile/"},
-            ],
-        },
-        {
-            "title": "Orders",
-            "items": [
-                {"title": "Orders", "link": "/admin/task/order/"},
-                {"title": "Change Requests", "link": "/admin/task/orderchangesrequest/"},
-                {"title": "Refunds", "link": "/admin/task/orderrefundrequest/"},
-            ],
-        },
-        {
-            "title": "Communication",
-            "items": [
-                {"title": "Chats", "link": "/admin/chat/chatroom/"},
-                {"title": "Messages", "link": "/admin/chat/chatmessage/"},
-                {"title": "Notifications", "link": "/admin/chat/notification/"},
-            ],
-        },
-        {
-            "title": "Finance",
-            "items": [
-                {"title": "Transactions", "link": "/admin/task/paymenttransaction/"},
-            ],
-        },
-        {
-            "title": "Support",
-            "items": [
-                {"title": "Tickets", "link": "/admin/core/ticket/"},
-            ],
-        },
-    ]
-}
+# UNFOLD = {
+#     "SITE_TITLE": "Worker Hiring Admin",
+#     "NAVIGATION": [
+#         {
+#             "title": "User Management",
+#             "items": [
+#                 {"title": "Users", "link": "/admin/account/user/"},
+#                 {"title": "Providers", "link": "/admin/account/serviceproviderprofile/"},
+#             ],
+#         },
+#         {
+#             "title": "Orders",
+#             "items": [
+#                 {"title": "Orders", "link": "/admin/task/order/"},
+#                 {"title": "Change Requests", "link": "/admin/task/orderchangesrequest/"},
+#                 {"title": "Refunds", "link": "/admin/task/orderrefundrequest/"},
+#             ],
+#         },
+#         {
+#             "title": "Communication",
+#             "items": [
+#                 {"title": "Chats", "link": "/admin/chat/chatroom/"},
+#                 {"title": "Messages", "link": "/admin/chat/chatmessage/"},
+#                 {"title": "Notifications", "link": "/admin/chat/notification/"},
+#             ],
+#         },
+#         {
+#             "title": "Finance",
+#             "items": [
+#                 {"title": "Transactions", "link": "/admin/task/paymenttransaction/"},
+#             ],
+#         },
+#         {
+#             "title": "Support",
+#             "items": [
+#                 {"title": "Tickets", "link": "/admin/core/ticket/"},
+#             ],
+#         },
+#     ]
+# }
 
 
 

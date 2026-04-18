@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import Ticket, TicketReply, TicketSenderType, SignUpSlider, CustomerScreenSlide
 from find_worker_config.model_choice import UserRole
-from task.models import AdminWallet, PaymentTransaction
+from task.models import AdminWallet
 
 
 # -------------------

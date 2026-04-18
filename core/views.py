@@ -1,14 +1,14 @@
-from rest_framework import viewsets, status
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from .models import Ticket, SignUpSlider, CustomerScreenSlide
 from .serializers import TicketSerializer, TicketReplySerializer, TicketStatusUpdateSerializer, AdminWalletSerializer, SignUpSliderSerializer, CustomerScreenSlideSerializer
-from find_worker_config.model_choice import TicketSenderType, TicketStatus, TicketUserProfileType, UserRole
+from find_worker_config.model_choice import UserRole
 from find_worker_config.utils import UpdateModelViewSet, LogActivityModule
 from django.db import transaction
 from rest_framework.views import APIView
-from task.models import AdminWallet, PaymentTransaction
+from task.models import AdminWallet
 from find_worker_config.permissions import IsAdminWritePermissionOnly
 
 # -------------------
