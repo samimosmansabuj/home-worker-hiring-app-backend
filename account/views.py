@@ -35,7 +35,7 @@ class WelComeAPI(APIView):
         return Response(
             {
                 "status": True,
-                "message": "Welcome to API Started!!!"
+                "message": "APi Active!!!"
             }, status=status.HTTP_200_OK
         )
 
