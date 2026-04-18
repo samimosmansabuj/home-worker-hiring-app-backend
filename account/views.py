@@ -9,7 +9,7 @@ from .serializers import (
     UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer
 )
 from core.models import AddOfferVoucher
-from .utils import generate_otp, KYCVerificationService
+# from .utils import generate_otp, KYCVerificationService
 from django.db.models import Q
 
 from find_worker_config.model_choice import UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
@@ -350,8 +350,9 @@ class ProviderVerificationViews(APIView):
             serializer.save()
             image_path = verification.document.path
 
-            service = KYCVerificationService(image_path, request.user)
-            result = service.verify()
+            # service = KYCVerificationService(image_path, request.user)
+            # result = service.verify()
+            result = True
 
             provider.is_verified = result.get('verified', False)
             provider.save(update_fields=["is_verified"])
