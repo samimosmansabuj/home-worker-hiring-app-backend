@@ -39,7 +39,9 @@ INSTALLED_APPS = [
     'encrypted_model_fields',
 
     # custom app
-    'account', 'chat_notify', 'core', 'job', 'task'
+    'account', 'chat_notify', 'core', 'job', 'task',
+
+    'drf_spectacular',
     
 ]
 
@@ -77,6 +79,8 @@ REST_FRAMEWORK = {
     'DEFAULT_FILTER_BACKENDS': (
         'django_filters.rest_framework.DjangoFilterBackend',
     ),
+
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 SIMPLE_JWT = {
@@ -93,6 +97,24 @@ SIMPLE_JWT = {
 }
 
 CORS_ORIGIN_ALLOW_ALL = True
+
+
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Worker Hiring API',
+    'DESCRIPTION': 'API documentation for your project',
+    'VERSION': '1.0.0',
+    'SECURITY': [{'BearerAuth': []}],
+    'COMPONENTS': {
+        'SECURITY_SCHEMES': {
+            'BearerAuth': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'JWT',
+            }
+        }
+    },
+}
 
 # ==================== Rest Frame Work Configurations End====================
 # ================================================================================
