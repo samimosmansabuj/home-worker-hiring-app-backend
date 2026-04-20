@@ -4,15 +4,18 @@ from rest_framework.generics import RetrieveUpdateDestroyAPIView, CreateAPIView,
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
-from .models import Address, CustomerProfile, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher
+
+from job.serializers import ProviderSerializer
+from .models import Address, CustomerProfile, HelperWeeklyAvailability, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher, SavedHelper
 from .serializers import (
-    UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer
+    HelperWeeklyAvailabilitySerializer, ReviewAndRatingProfileSerializer, UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer, SaveHelperProfileSerializer
 )
 from core.models import AddOfferVoucher
 # from .utils import generate_otp, KYCVerificationService
-from django.db.models import Q
-
-from find_worker_config.model_choice import UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
+from django.db.models import F, Q, Avg, ExpressionWrapper, FloatField, Sum, Value
+from django.db.models.functions import Coalesce
+from rest_framework.viewsets import GenericViewSet
+from find_worker_config.model_choice import OrderStatus, UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
 from .models import ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
@@ -442,7 +445,240 @@ class ProviderAddressUpdateView(APIView):
                     "message": str(e)
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class ReviewAndRatingProfileViewSet(GenericViewSet):
+    serializer_class = ReviewAndRatingProfileSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["profile_type"] = self.request.headers.get("profile_type", "").upper()
+        return context
+    
+    @action(detail=False, methods=["get"], url_path="customer(?:/(?P<review_id>[^/.]+))?")
+    def customer_reviews(self, request, review_id=None):
+        if review_id:
+            review = get_object_or_404(
+                ReviewAndRating,
+                id=review_id,
+                customer=request.user.customer_profile,
+                send_by=UserDefault.PROVIDER
+            )
+            serializer = self.get_serializer(review)
+        else:
+            reviews = ReviewAndRating.objects.filter(
+                customer=request.user.customer_profile,
+                send_by=UserDefault.PROVIDER
+            )
+            serializer = self.get_serializer(reviews, many=True)
+
+        return Response({
+            "status": True,
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="provider(?:/(?P<review_id>[^/.]+))?")
+    def provider_reviews(self, request, review_id=None):
+        if review_id:
+            review = get_object_or_404(
+                ReviewAndRating,
+                id=review_id,
+                provider=request.user.hasServiceProviderProfile,
+                send_by=UserDefault.CUSTOMER
+            )
+            serializer = self.get_serializer(review)
+        else:
+            reviews = ReviewAndRating.objects.filter(
+                provider=request.user.hasServiceProviderProfile, send_by=UserDefault.CUSTOMER
+            )
+            serializer = self.get_serializer(reviews, many=True)
+        return Response(
+            {
+                "status": True,
+                "data": serializer.data
+            }, status=status.HTTP_200_OK
+        )
+
 # User Info Current ===========================
+
+
+# ===============================================================================
+# Helper/Provider User Related API Views Start================================
+class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
+    serializer_class = HelperWeeklyAvailabilitySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return HelperWeeklyAvailability.objects.filter(provider=self.request.user.service_provider_profile)
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(
+            {
+                "status": True,
+                "data": serializer.data
+            }, status=status.HTTP_200_OK
+        )
+    
+
+# Helper/Provider User Related API Views End==================================
+# ===============================================================================
+
+# ===============================================================================
+# Customer User Related API Views Start================================
+from task.models import Order, ReviewAndRating
+from .models import ActivityLog
+class MyActivityViews(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, *args, **kwargs):
+        active_orders = Order.objects.filter(
+            customer=self.request.user.customer_profile, status__in=[OrderStatus.ACCEPT, OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]
+        ).count()
+        completed_orders = Order.objects.filter(
+            customer=self.request.user.customer_profile, status__in=[OrderStatus.COMPLETED]
+        ).count()
+        total_spent = Order.objects.filter(
+            customer=self.request.user.customer_profile, status__in=[OrderStatus.COMPLETED]
+        ).aggregate(total=Sum('amount'))['total'] or 0
+        avg_rating = ReviewAndRating.objects.filter(
+            customer=self.request.user.customer_profile
+        ).aggregate(avg=Avg('rating'))['avg'] or 0
+
+        my_activity = {
+            "active_orders": active_orders,
+            "completed_orders": completed_orders,
+            "total_spent": total_spent,
+            "avg_rating": round(avg_rating, 2)
+        }
+
+        recent_activities = ActivityLog.objects.filter(
+            user=self.request.user, user_type=UserDefault.CUSTOMER
+        ).order_by('-created_at')[:5]
+        recent_activity_data = [
+            {
+                "id": activity.id,
+                "action": activity.action,
+                "timestamp": activity.created_at
+            }
+            for activity in recent_activities
+        ]
+        return Response(
+            {
+                "status": True,
+                "data": {
+                    "my_activity": my_activity,
+                    "recent_activities": recent_activity_data
+                }
+            }, status=status.HTTP_200_OK
+        )
+
+class SaveHelperProfileViews(UpdateReadOnlyModelViewSet):
+    queryset = SavedHelper.objects.all()
+    serializer_class = SaveHelperProfileSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return SavedHelper.objects.filter(customer=self.request.user.customer_profile)
+    
+    @action(detail=False, methods=["post"], url_path="add-helper/(?P<helper_id>[^/.]+)")
+    def add_helper(self, request, helper_id):
+        try:
+            if not ServiceProviderProfile.objects.filter(id=helper_id).exists():
+                raise Exception("This helper does not exist. Please check if the helper id was keyed in correctly.")
+            elif ServiceProviderProfile.objects.get(id=helper_id).user == request.user:
+                raise Exception("You can't save your own profile!")
+            elif self.get_queryset().filter(helper__id=helper_id).exists():
+                raise Exception("You've already saved this one! Find in Saved Helpers")
+            
+            with transaction.atomic():
+                helper_profile = ServiceProviderProfile.objects.get(id=helper_id)
+                SavedHelper.objects.create(
+                    customer=request.user.customer_profile,
+                    helper=helper_profile
+                )
+                return Response(
+                    {
+                        "status": True,
+                        "message": f"{helper_profile.user.first_name} {helper_profile.user.last_name} Add in your saved helpers. Find in Saved Helpers."
+                    }, status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=["delete"], url_path="remove-helper")
+    def remove_helper(self, request, pk=None):
+        try:
+            saved_helper = self.get_object()
+            saved_helper.delete()
+            return Response(
+                {
+                    "status": True,
+                    "message": "Helper removed from saved helpers."
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+class GetMyReferralCodeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(
+            {
+                "status": True,
+                "referral_code": self.request.user.referral_code or None
+            }, status=status.HTTP_200_OK
+        )
+
+class RecommendationHelperViewSet(UpdateReadOnlyModelViewSet):
+    serializer_class = ProviderSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_current_location_lat_lng(self):
+        current_location = self.request.query_params.get("current_location", None)
+        if current_location:
+            try:
+                lat, lng = map(float, current_location.split(","))
+                return lat, lng
+            except ValueError:
+                return None
+        else:
+            current_location = self.request.user.addresses.filter(is_default=True).first()
+            if current_location:
+                return current_location.lat, current_location.lng
+        return None
+    
+    def get_queryset(self):
+        location = self.get_current_location_lat_lng() or (None, None)
+        if location:
+            user_lat, user_lng = location
+            queryset = ServiceProviderProfile.objects.filter(is_verified=True)
+            print("Queryset before annotation:", queryset)  # Debugging line to check the initial queryset
+            distance_expr = ExpressionWrapper(
+                ((Value(user_lat) - F('office_location__lat'))**2 +
+                (Value(user_lng) - F('office_location__lng'))**2) ** 0.5,
+                output_field=FloatField()
+            )
+            queryset = queryset.annotate(
+                distance=distance_expr
+            ).order_by('distance')[:3]
+            return queryset[:3]
+
+# Customer User Related API Views End==================================
+# ===============================================================================
+
 
 
 # Referral & Voucher Views==================================

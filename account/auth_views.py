@@ -14,6 +14,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.request import Request
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
+from find_worker_config.utils import LogActivityModule
 
 
 

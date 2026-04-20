@@ -256,6 +256,14 @@ class Address(models.Model):
     def __str__(self):
         return f"{self.address_line} for {self.user}"
 
+class SavedHelper(models.Model):
+    customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name="saved_helpers")
+    helper = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="saved_by_customers")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("customer", "helper")
+
 # ============================Address======================
 
 
@@ -418,6 +426,7 @@ class ProviderVerification(models.Model):
 # Logs Model==============================================
 class ActivityLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    user_type = models.CharField(max_length=30, choices=UserDefault.choices, blank=True, null=True)
     action = models.CharField(max_length=255)
     entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
     entity_id = models.PositiveBigIntegerField(blank=True, null=True)

@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import Ticket, TicketReply, TicketSenderType, SignUpSlider, CustomerScreenSlide
 from find_worker_config.model_choice import UserRole
 from task.models import AdminWallet
-
+from django.db import transaction
 
 # -------------------
 # Ticket Reply Serializer
@@ -18,19 +18,20 @@ class TicketReplySerializer(serializers.ModelSerializer):
         return obj.reply_sender.username if obj.reply_sender else None
 
     def create(self, validated_data):
-        request = self.context["request"]
-        user = request.user
-        sender_type = request.headers.get("sender-type", "")
-        if not sender_type:
-            raise Exception("Sender Type Missing!")
-        elif sender_type == TicketSenderType.USER and user.role == UserRole.ADMIN:
-            raise Exception("Sender Type & User Role is not same!")
-        elif sender_type == TicketSenderType.ADMIN and user.role == UserRole.USER:
-            raise Exception("Sender Type & User Role is not same!")
-        
-        validated_data["reply_sender"] = user
-        validated_data["sender_type"] = sender_type
-        return super().create(validated_data)
+        with transaction.atomic():
+            request = self.context["request"]
+            user = request.user
+            sender_type = request.headers.get("sender-type", "")
+            if not sender_type:
+                raise Exception("Sender Type Missing!")
+            elif sender_type == TicketSenderType.USER and user.role == UserRole.ADMIN:
+                raise Exception("Sender Type & User Role is not same!")
+            elif sender_type == TicketSenderType.ADMIN and user.role == UserRole.USER:
+                raise Exception("Sender Type & User Role is not same!")
+            
+            validated_data["reply_sender"] = user
+            validated_data["sender_type"] = sender_type
+            return super().create(validated_data)
 # -------------------
 
 # -------------------

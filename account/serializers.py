@@ -2,9 +2,11 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod
+
+from task.models import ReviewAndRating
+from .models import HelperWeeklyAvailability, SavedHelper, User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod
 from .utils import generate_otp
-from find_worker_config.model_choice import OTPType, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
+from find_worker_config.model_choice import OTPType, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, OrderStatus, UserDefault
 from django.core.exceptions import ObjectDoesNotExist
 from find_worker_config.model_choice import UserRole
 from django.contrib.auth import get_user_model
@@ -321,6 +323,7 @@ class ServiceCategoryField(serializers.ListField):
             {"id": c.id, "title": c.title} for c in value.all()
         ]
 
+
 class CustomerProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerProfile
@@ -453,6 +456,8 @@ class ApplyVoucherSerializer(serializers.Serializer):
         return data
 # -------------------------------
 
+
+
 class ProviderVerificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProviderVerification
@@ -482,6 +487,70 @@ class ProviderVerificationSerializer(serializers.ModelSerializer):
                 }
             data["provider"] = build_user_profile(instance.provider.id, instance.provider.user)
         return data
+
+class SaveHelperProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SavedHelper
+        fields = "__all__"
+
+class ReviewAndRatingProfileSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ReviewAndRating
+        fields = "__all__"
+        read_only_fields = ["customer", "provider", "order"]
+    
+    def get_provider_data(self, instance):
+        request = self.context.get("request")
+        if instance.provider and instance.provider.user:
+            return {
+                "id": instance.provider.id,
+                "first_name": instance.provider.user.first_name,
+                "last_name": instance.provider.user.last_name,
+                "photo": request.build_absolute_uri(instance.provider.user.photo.url) if instance.provider.user.photo else None,
+            }
+        return None
+
+    def get_customer_data(self, instance):
+        request = self.context.get("request")
+        if instance.customer and instance.customer.user:
+            return {
+                "id": instance.customer.id,
+                "first_name": instance.customer.user.first_name,
+                "last_name": instance.customer.user.last_name,
+                "photo": request.build_absolute_uri(instance.customer.user.photo.url) if instance.customer.user.photo else None,
+            }
+        return None
+    
+    def clean_data(self, data):
+        data.pop("send_by", None)
+        data.pop("created", None)
+        data.pop("order", None)
+        return data
+
+    def to_representation(self, instance):
+        data = self.clean_data(super().to_representation(instance))
+        profile_type = self.context.get("profile_type")
+        
+        if profile_type == UserDefault.CUSTOMER:
+            data.pop("customer", None)
+            data["provider"] = self.get_provider_data(instance)
+        elif profile_type == UserDefault.PROVIDER:
+            data.pop("provider", None)
+            data["customer"] = self.get_customer_data(instance)
+        return data
+
+
+
+
+class HelperWeeklyAvailabilitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HelperWeeklyAvailability
+        fields = "__all__"
+
+
+
+
 # User Info Current ===========================
 # =================================================================
 

@@ -4,14 +4,14 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from .models import Ticket, SignUpSlider, CustomerScreenSlide
 from .serializers import TicketSerializer, TicketReplySerializer, TicketStatusUpdateSerializer, AdminWalletSerializer, SignUpSliderSerializer, CustomerScreenSlideSerializer
-from find_worker_config.model_choice import UserRole
+from find_worker_config.model_choice import UserRole, TicketStatus
 from find_worker_config.utils import UpdateModelViewSet, LogActivityModule
 from django.db import transaction
 from rest_framework.views import APIView
 from task.models import AdminWallet
 from find_worker_config.permissions import IsAdminWritePermissionOnly
 
-# -------------------
+# ----------------------------------------------------------
 # Ticket ViewSet
 class TicketViewSet(UpdateModelViewSet):
     queryset = Ticket.objects.all().order_by("-created_at")
@@ -30,11 +30,9 @@ class TicketViewSet(UpdateModelViewSet):
         user = self.request.user
         profile_type = self.request.headers.get("profile-type", "").upper()
         tickets = Ticket.objects.all().order_by("-created_at")
-
+        
         if user.role == UserRole.USER and profile_type:
             return tickets.filter(user=user, user_profile_type=profile_type)
-        elif user.role == UserRole.USER:
-            return tickets.filter(user=user)
         elif user.role == UserRole.ADMIN:
             return tickets
         return None
@@ -78,6 +76,9 @@ class TicketViewSet(UpdateModelViewSet):
         if serializer.is_valid():
             with transaction.atomic():
                 serializer.save(ticket=ticket)
+                if ticket.status == TicketStatus.CLOSED:
+                    ticket.status = TicketStatus.OPEN
+                    ticket.save()
                 return Response(
                     {
                         "status": True,
@@ -109,7 +110,7 @@ class TicketViewSet(UpdateModelViewSet):
             }
         )
     # -------------------
-# -------------------
+# ----------------------------------------------------------
 
 
 # -------------------
