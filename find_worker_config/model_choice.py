@@ -27,13 +27,13 @@ class HelperStatus(models.TextChoices):
     PERMANENT_SUSPENSED = "PERMANENT_SUSPENSED"
 
 class WeekDay(models.TextChoices):
-    MON = "mon", "Monday"
-    TUE = "tue", "Tuesday"
-    WED = "wed", "Wednesday"
-    THU = "thu", "Thursday"
-    FRI = "fri", "Friday"
-    SAT = "sat", "Saturday"
-    SUN = "sun", "Sunday"
+    SUN = "Sun", "Sunday"
+    MON = "Mon", "Monday"
+    TUE = "Tue", "Tuesday"
+    WED = "Wed", "Wednesday"
+    THU = "Thu", "Thursday"
+    FRI = "Fri", "Friday"
+    SAT = "Sat", "Saturday"
 
 class DayStatus(models.TextChoices):
     AVAILABLE = "AVAILABLE"

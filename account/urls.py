@@ -15,6 +15,7 @@ router.register(r"address", UserAddressViews, basename="user_address")
 router.register(r"reviews", ReviewAndRatingProfileViewSet, basename="user_review_rating")
 # provider-----
 router.register(r'provider/payout-methods', ProviderPayoutMethodViewSet, basename='provider-payout')
+router.register(r'helper-weekly-availability', HelperWeeklyAvailabilityViewSet, basename='helper-weekly-availability')
 # customer-----
 router.register(r'customer/payment-methods', CustomerPaymentMethodViewSet, basename='customer-payment')
 router.register(r'customer/save-helper', SaveHelperProfileViews, basename='customer-save-helper')
@@ -61,7 +62,7 @@ urlpatterns = [
     path("create-helper-profile/", CreateUserHelperView.as_view(), name="create-helper-profile"),
     path("provider-address-update/", ProviderAddressUpdateView.as_view(), name="provider-address-update"),
     path("provider-verification/", ProviderVerificationViews.as_view(), name="provider-verification"),
-    path("helper-weekly-availability/", HelperWeeklyAvailabilityViewSet.as_view({'get': 'list', 'post': 'create'}), name="helper-weekly-availability"),
+    # path("helper-weekly-availability/", HelperWeeklyAvailabilityViewSet.as_view({'get': 'list', 'post': 'create'}), name="helper-weekly-availability"),
     
 
     path("user/language/", UserDefaultLanguage.as_view(), name="user-language"),

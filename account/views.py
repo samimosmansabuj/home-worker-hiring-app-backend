@@ -1,3 +1,5 @@
+# import datetime
+from datetime import datetime, timedelta
 from django.shortcuts import render, get_object_or_404
 from rest_framework.response import Response
 from rest_framework.generics import RetrieveUpdateDestroyAPIView, CreateAPIView, GenericAPIView
@@ -6,7 +8,7 @@ from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
 
 from job.serializers import ProviderSerializer
-from .models import Address, CustomerProfile, HelperWeeklyAvailability, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher, SavedHelper
+from .models import Address, CustomerProfile, HelperSlotException, HelperSpecialDate, HelperWeeklyAvailability, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher, SavedHelper
 from .serializers import (
     HelperWeeklyAvailabilitySerializer, ReviewAndRatingProfileSerializer, UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer, SaveHelperProfileSerializer
 )
@@ -15,7 +17,9 @@ from core.models import AddOfferVoucher
 from django.db.models import F, Q, Avg, ExpressionWrapper, FloatField, Sum, Value
 from django.db.models.functions import Coalesce
 from rest_framework.viewsets import GenericViewSet
-from find_worker_config.model_choice import OrderStatus, UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
+from find_worker_config.model_choice import (
+    OrderStatus, UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, DayStatus, HelperSlotExceptionType
+)
 from .models import ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
@@ -507,11 +511,19 @@ class ReviewAndRatingProfileViewSet(GenericViewSet):
 class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
     serializer_class = HelperWeeklyAvailabilitySerializer
     permission_classes = [IsAuthenticated]
+    weekly_day_list = WeekDay.values
+
+    def convert_to_24h(self, time_str):
+        try:
+            return datetime.strptime(time_str, "%I:%M %p").time()
+        except ValueError:
+            raise ValidationError("Invalid time format. Expected format like '09:00 AM'")
 
     def get_queryset(self):
         return HelperWeeklyAvailability.objects.filter(provider=self.request.user.service_provider_profile)
     
     def list(self, request, *args, **kwargs):
+        print("weekly_day_list: ", self.weekly_day_list)
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
         return Response(
@@ -521,6 +533,160 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
             }, status=status.HTTP_200_OK
         )
     
+    @action(detail=False, methods=["get"], url_path="weekly-day-list")
+    def get_weekly_day_list(self, request, *args, **kwargs):
+        return Response(
+            {
+                "status": True,
+                "data": self.weekly_day_list
+            }, status=status.HTTP_200_OK
+        )
+    
+
+
+    def check_for_set_weekly_availability(self, available_days, start_time, end_time, day_status=None):
+        if type(available_days) is str:
+            available_days = [available_days]
+        if not 1 <= len(available_days) <= 7:
+            raise Exception("You must select at least 1 day and at most 7 days for availability.")
+        elif not all(isinstance(day, str) and day in WeekDay.values for day in available_days):
+            raise Exception("Days must be a list of valid week days.")
+        elif not start_time or not end_time:
+            raise Exception("Start time and end time are required.")
+        elif self.convert_to_24h(start_time) >= self.convert_to_24h(end_time):
+            raise Exception("Start time must be before end time.")
+        elif day_status and day_status not in [DayStatus.AVAILABLE, DayStatus.OFF, DayStatus.UNAVAILABLE]:
+            raise Exception("Invalid day status.")
+
+    @action(detail=False, methods=["post"], url_path="update-availability/(?P<day>[^/.]+)")
+    def update_availability(self, request, day):
+        try:
+            available_day, created = HelperWeeklyAvailability.objects.get_or_create(provider=request.user.service_provider_profile, day=day)
+            data = request.data
+            start_time = data.get("start_time", available_day.start_time.strftime("%I:%M %p") if available_day.start_time else None)
+            end_time = data.get("end_time", available_day.end_time.strftime("%I:%M %p") if available_day.end_time else None)
+            slot_duration_minutes = data.get("slot_duration_minutes", 60)
+            day_status = DayStatus.AVAILABLE if data.get("day_status") == 1 else DayStatus.OFF if data.get("day_status") == 0 else available_day.day_status
+            self.check_for_set_weekly_availability(day, start_time, end_time, day_status)
+            
+            with transaction.atomic():
+                available_day.day_status = day_status
+                available_day.start_time = self.convert_to_24h(start_time)
+                available_day.end_time = self.convert_to_24h(end_time)
+                available_day.slot_duration_minutes = slot_duration_minutes
+                available_day.save()
+            return Response(
+                {
+                    "status": True,
+                    "message": "Day availability updated successfully."
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=False, methods=["post"], url_path="set-weekly-availability")
+    def set_weekly_availability(self, request):
+        try:
+            data = request.data
+            available_days = data.get("days", [])
+            start_time = data.get("start_time")
+            end_time = data.get("end_time")
+            slot_duration_minutes = data.get("slot_duration_minutes", 60)
+            self.check_for_set_weekly_availability(available_days, start_time, end_time)
+            
+            with transaction.atomic():
+                self.get_queryset().delete()
+                availability_objects = [
+                    HelperWeeklyAvailability(
+                        provider=request.user.service_provider_profile,
+                        day=day, day_status=DayStatus.AVAILABLE if day in available_days else DayStatus.OFF,start_time=self.convert_to_24h(start_time), end_time=self.convert_to_24h(end_time), slot_duration_minutes=slot_duration_minutes
+                    )
+                    for day in self.weekly_day_list
+                ]
+                HelperWeeklyAvailability.objects.bulk_create(availability_objects)
+            return Response(
+                {
+                    "status": True,
+                    "message": "Weekly availability set successfully."
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=False, methods=["get"], url_path="date-slot-list/(?P<date>[^/.]+)")
+    def get_date_slot_list(self, request, date):
+        from core.services.slot_status_engine import SlotStatusEngine
+        try:
+            provider = request.user.service_provider_profile
+
+            # Parse Date
+            date_obj = datetime.strptime(date, "%d-%m-%Y").date()
+            weekday = date_obj.strftime("%a")
+
+            # Load Weekly Availability and show "No available slots for this date." if no availability for this date
+            availability = HelperWeeklyAvailability.objects.filter(
+                provider=provider,
+                day=weekday
+                ).first()
+            slot_duration = availability.slot_duration_minutes if availability else 60
+
+            # Load Bookings (Orders)
+            
+            # Full day Time Range (00:00 → 23:59)
+            # day_start = datetime.combine(date_obj, datetime.min.time())
+            # day_end = datetime.combine(date_obj, datetime.max.time())
+            day_start = datetime.combine(date_obj, datetime.min.time())
+            day_end = datetime.combine(date_obj + timedelta(days=1), datetime.min.time())
+            
+            # Slot Generation
+            slots = []
+            current_time = day_start
+            while current_time + timedelta(minutes=slot_duration) <= day_end:
+                slot_start = current_time
+                slot_end = current_time + timedelta(minutes=slot_duration)
+
+                # SLOT STATUS ENGINE CALL
+                slot_engine = SlotStatusEngine()
+                slot_status = slot_engine.get_status(
+                    provider=provider,
+                    date_obj=date_obj,
+                    slot_start=slot_start,
+                    slot_end=slot_end
+                )
+
+                slots.append({
+                    "slot": f"{slot_start.strftime('%I:%M %p')} - {slot_end.strftime('%I:%M %p')}",
+                    "start_time": slot_start.strftime("%I:%M %p"),
+                    "end_time": slot_end.strftime("%I:%M %p"),
+                    "status": slot_status
+                })
+                current_time += timedelta(minutes=slot_duration)
+            return Response(
+                {
+                    "status": True,
+                    "count": len(slots),
+                    "data": slots
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+
 
 # Helper/Provider User Related API Views End==================================
 # ===============================================================================
