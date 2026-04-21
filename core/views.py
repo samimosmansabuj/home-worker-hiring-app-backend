@@ -29,7 +29,7 @@ class TicketViewSet(UpdateModelViewSet):
     def get_queryset(self):
         user = self.request.user
         profile_type = self.request.headers.get("profile-type", "").upper()
-        tickets = Ticket.objects.all().order_by("-created_at")
+        tickets = Ticket.objects.all().order_by("-updated_at")
         
         if user.role == UserRole.USER and profile_type:
             return tickets.filter(user=user, user_profile_type=profile_type)
@@ -78,7 +78,7 @@ class TicketViewSet(UpdateModelViewSet):
                 serializer.save(ticket=ticket)
                 if ticket.status == TicketStatus.CLOSED:
                     ticket.status = TicketStatus.OPEN
-                    ticket.save()
+                ticket.save()
                 return Response(
                     {
                         "status": True,

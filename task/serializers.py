@@ -19,7 +19,8 @@ class ServiceCategorySerializer(serializers.ModelSerializer):
 
 
 
-
+# ==========================================================================================
+# =================== Order Section Start===================================
 class OrderSerializer(serializers.ModelSerializer):
     category = serializers.PrimaryKeyRelatedField(queryset=ServiceCategory.objects.all())
     subcategory = serializers.PrimaryKeyRelatedField(
@@ -162,7 +163,8 @@ class OrderRefundRequestSerializer(serializers.ModelSerializer):
 
         return attrs
 
-
+# =================== Order Section End===================================
+# ==========================================================================================
 
 
 
@@ -173,6 +175,42 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = PaymentTransaction
         fields = "__all__"
+
+class PaymentTransactionDetailSerializer(serializers.ModelSerializer):
+    customer = serializers.SerializerMethodField()
+    provider = serializers.SerializerMethodField()
+    order = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PaymentTransaction
+        exclude = ["user"]
+
+    def get_user(self, obj):
+        return {
+            "id": obj.user.id if obj.user else None,
+            "name": str(obj.user) if obj.user else None,
+        }
+
+    def get_customer(self, obj):
+        return {
+            "id": obj.customer.id if obj.customer else None,
+            "name": str(obj.customer) if obj.customer else None,
+        }
+
+    def get_provider(self, obj):
+        return {
+            "id": obj.provider.id if obj.provider else None,
+            "name": str(obj.provider) if obj.provider else None,
+        }
+
+    def get_order(self, obj):
+        if obj.order:
+            return {
+                "id": obj.order.id,
+                "title": obj.order.title,
+                "amount": obj.order.amount,
+            }
+        return None
 
 # =================== Payment transaction Section End===================================
 # ==========================================================================================

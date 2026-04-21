@@ -22,6 +22,7 @@ class Ticket(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        ordering = ["-updated_at"]
         indexes = [
             models.Index(fields=["status"]),
             models.Index(fields=["created_at"]),
@@ -38,6 +39,9 @@ class TicketReply(models.Model):
     attachment = models.FileField(upload_to="ticket_replies/", blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at"]
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)

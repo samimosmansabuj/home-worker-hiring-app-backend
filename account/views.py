@@ -6,11 +6,10 @@ from rest_framework.generics import RetrieveUpdateDestroyAPIView, CreateAPIView,
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
-
-from job.serializers import ProviderSerializer
-from .models import Address, CustomerProfile, HelperSlotException, HelperSpecialDate, HelperWeeklyAvailability, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher, SavedHelper
+from job.serializers import CurrentUserHelperSerializer
+from .models import Address, CustomerProfile, HelperSlotException, HelperSpecialDate, HelperWallet, HelperWeeklyAvailability, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher, SavedHelper
 from .serializers import (
-    HelperWeeklyAvailabilitySerializer, ReviewAndRatingProfileSerializer, UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer, SaveHelperProfileSerializer
+    HelperWeeklyAvailabilitySerializer, ProviderEarningsViewSerializer, ReviewAndRatingProfileSerializer, UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer, SaveHelperProfileSerializer
 )
 from core.models import AddOfferVoucher
 # from .utils import generate_otp, KYCVerificationService
@@ -18,7 +17,7 @@ from django.db.models import F, Q, Avg, ExpressionWrapper, FloatField, Sum, Valu
 from django.db.models.functions import Coalesce
 from rest_framework.viewsets import GenericViewSet
 from find_worker_config.model_choice import (
-    OrderStatus, UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, DayStatus, HelperSlotExceptionType
+    DateStatus, OrderStatus, UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, DayStatus, HelperSlotExceptionType, PaymentAction
 )
 from .models import ProviderVerification
 from .utils import generate_otp, get_otp_object
@@ -28,7 +27,14 @@ from find_worker_config.utils import LogActivityModule
 from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth import get_user_model
+from task.models import Order, ReviewAndRating
+from .models import ActivityLog
 
+from datetime import timedelta
+from django.utils import timezone
+from django.db.models import Sum
+from collections import defaultdict
+from task.serializers import PaymentTransaction, PaymentTransactionDetailSerializer
 
 from rest_framework.decorators import action
 User = get_user_model()
@@ -128,125 +134,6 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
 
-class CurrentUserHelperView(RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated]
-    serializer_class = CurrentUserHelperSerializer
-
-    def create_log(self):
-        data = {
-            "user": self.request.user,
-            "action": "Helper Profile Update",
-            "entity": self.request.user.service_provider_profile,
-            "request": self.request,
-            "metadata": {}
-        }
-        log = LogActivityModule(data)
-        log.create()
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context["request"] = self.request
-        return context
-    
-    def get_object(self):
-        user = self.request.user
-        try:
-            return ServiceProviderProfile.objects.get(user=user)
-        except ServiceProviderProfile.DoesNotExist:
-            raise NotFound(detail="Helper Profile Not Created")
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        return Response(
-            {
-                'status': True,
-                'data': self.get_serializer(instance).data
-            }, status=status.HTTP_200_OK
-        )
-
-    def update(self, request, *args, **kwargs):
-        try:
-            with transaction.atomic():
-                partial = kwargs.pop('partial', False)
-                instance = self.get_object()
-                serializer = self.get_serializer(instance, data=request.data, partial=partial)
-                serializer.is_valid(raise_exception=True)
-                self.perform_update(serializer)
-
-                if getattr(instance, '_prefetched_objects_cache', None):
-                    instance._prefetched_objects_cache = {}
-                
-                self.create_log()
-                return Response(
-                    {
-                        "status": True,
-                        "data": serializer.data
-                    }
-                )
-        except ValidationError as e:
-            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-
-class CreateUserHelperView(CreateAPIView):
-    permission_classes = [IsAuthenticated]
-    serializer_class = CurrentUserHelperSerializer
-
-    def create_log(self):
-        data = {
-            "user": self.request.user,
-            "action": "Helper Profile Created",
-            "entity": self.request.user.service_provider_profile,
-            "request": self.request,
-            "metadata": {}
-        }
-        log = LogActivityModule(data)
-        log.create()
-
-    def get_object(self):
-        user = self.request.user
-        if self.get_helper_profile(user):
-            raise Exception("Helper profile already created!")
-        return user
-    
-    def get_helper_profile(self, user):
-        if ServiceProviderProfile.objects.filter(user=user).exists():
-            return True
-        return False
-
-    def create(self, request, *args, **kwargs):
-        try:
-            with transaction.atomic():
-                serializer = self.get_serializer(data=request.data)
-                serializer.is_valid(raise_exception=True)
-                serializer.save(user=self.get_object())
-                self.create_log()
-                return Response(
-                    {
-                        "status": True,
-                        "data": serializer.data
-                    }
-                )
-        except ValidationError as e:
-            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-
 class UserAddressViews(UpdateModelViewSet):
     model = Address
     queryset = Address.objects.all()
@@ -315,72 +202,6 @@ class UserAddressViews(UpdateModelViewSet):
             }, status=status.HTTP_200_OK
         )
 
-class ProviderVerificationViews(APIView):
-    serializer_class = ProviderVerificationSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, *args, **kwargs):
-        try:
-            if request.user.role == UserRole.USER:
-                serializer = self.serializer_class(request.user.service_provider_profile.verification, context={"request": request})
-            elif request.user.role == UserRole.ADMIN:
-                serializer = self.serializer_class(ProviderVerification.objects.all(), many=True, context={"request": request})
-            else:
-                raise Exception("Wrong user.")
-            
-            return Response(
-                {
-                    "status": True,
-                    "data": serializer.data
-                }, status=status.HTTP_200_OK
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }
-            )
-    
-    def post(self, request):
-        try:
-            if not self.request.user.hasServiceProviderProfile:
-                raise Exception("This user have no provider profile.")
-                        
-            provider = request.user.hasServiceProviderProfile
-            verification = provider.verification
-            if request.user.status == UserStatus.ACTIVE and provider.is_verified and verification.is_verified:
-                raise Exception(_("Already Verified!"))
-
-            serializer = self.serializer_class(verification, data=request.data, partial=True)
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            image_path = verification.document.path
-
-            # service = KYCVerificationService(image_path, request.user)
-            # result = service.verify()
-            result = True
-
-            provider.is_verified = result.get('verified', False)
-            provider.save(update_fields=["is_verified"])
-            verification.is_verified = result.get('verified', False)
-            verification.status == DocumentStatus.APPROVED if result.get('verified', False) else result.get("status", DocumentStatus.FAILED)
-            verification.save(update_fields=["is_verified", "status"])            
-            return Response(
-                {
-                    "status": True,
-                    "kyc_result": result
-                },
-                status=status.HTTP_200_OK
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
 class UserDefaultLanguage(APIView):
     def get(self, request, *args, **kwargs):
         if request.session["language"]:
@@ -416,39 +237,6 @@ class UserDefaultLanguage(APIView):
                 "language": request.session["language"]
             }
         )
-
-class ProviderAddressUpdateView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        try:
-            if not self.request.user.hasServiceProviderProfile:
-                raise Exception("This user have no provider profile.")
-            provider = request.user.hasServiceProviderProfile
-            data = request.data
-            address_object_id = data.get("address_object_id", None)
-            if address_object_id is None:
-                raise Exception("Address object id is required.")
-            address = get_object_or_404(
-                Address, id=address_object_id, user=request.user
-            )
-            if not address:
-                raise Exception("Address not found with this id for this user.")
-            provider.office_location = address
-            provider.save(update_fields=["office_location"])
-            return Response(
-                {
-                    "status": True,
-                    "message": "Office location updated successfully."
-                }, status=status.HTTP_200_OK
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
 class ReviewAndRatingProfileViewSet(GenericViewSet):
     serializer_class = ReviewAndRatingProfileSerializer
@@ -508,6 +296,227 @@ class ReviewAndRatingProfileViewSet(GenericViewSet):
 
 # ===============================================================================
 # Helper/Provider User Related API Views Start================================
+class CreateUserHelperView(CreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CurrentUserHelperSerializer
+
+    def create_log(self):
+        data = {
+            "user": self.request.user,
+            "action": "Helper Profile Created",
+            "entity": self.request.user.service_provider_profile,
+            "request": self.request,
+            "metadata": {}
+        }
+        log = LogActivityModule(data)
+        log.create()
+
+    def get_object(self):
+        user = self.request.user
+        if self.get_helper_profile(user):
+            raise Exception("Helper profile already created!")
+        return user
+    
+    def get_helper_profile(self, user):
+        if ServiceProviderProfile.objects.filter(user=user).exists():
+            return True
+        return False
+
+    def create(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                serializer = self.get_serializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                serializer.save(user=self.get_object())
+                self.create_log()
+                return Response(
+                    {
+                        "status": True,
+                        "data": serializer.data
+                    }
+                )
+        except ValidationError as e:
+            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+class CurrentUserHelperView(RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CurrentUserHelperSerializer
+
+    def create_log(self):
+        data = {
+            "user": self.request.user,
+            "action": "Helper Profile Update",
+            "entity": self.request.user.service_provider_profile,
+            "request": self.request,
+            "metadata": {}
+        }
+        log = LogActivityModule(data)
+        log.create()
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
+    
+    def get_object(self):
+        user = self.request.user
+        try:
+            return ServiceProviderProfile.objects.get(user=user)
+        except ServiceProviderProfile.DoesNotExist:
+            raise NotFound(detail="Helper Profile Not Created")
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        return Response(
+            {
+                'status': True,
+                'data': self.get_serializer(instance).data
+            }, status=status.HTTP_200_OK
+        )
+
+    def update(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                partial = kwargs.pop('partial', False)
+                instance = self.get_object()
+                serializer = self.get_serializer(instance, data=request.data, partial=partial)
+                serializer.is_valid(raise_exception=True)
+                self.perform_update(serializer)
+
+                if getattr(instance, '_prefetched_objects_cache', None):
+                    instance._prefetched_objects_cache = {}
+                
+                self.create_log()
+                return Response(
+                    {
+                        "status": True,
+                        "data": serializer.data
+                    }
+                )
+        except ValidationError as e:
+            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class ProviderVerificationViews(APIView):
+    serializer_class = ProviderVerificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        try:
+            if request.user.role == UserRole.USER:
+                serializer = self.serializer_class(request.user.service_provider_profile.verification, context={"request": request})
+            elif request.user.role == UserRole.ADMIN:
+                serializer = self.serializer_class(ProviderVerification.objects.all(), many=True, context={"request": request})
+            else:
+                raise Exception("Wrong user.")
+            
+            return Response(
+                {
+                    "status": True,
+                    "data": serializer.data
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }
+            )
+    
+    def post(self, request):
+        try:
+            with transaction.atomic():
+                if not self.request.user.hasServiceProviderProfile:
+                    raise Exception("This user have no provider profile.")
+                            
+                provider = request.user.hasServiceProviderProfile
+                verification = provider.verification
+                if request.user.status == UserStatus.ACTIVE and provider.is_verified and verification.is_verified:
+                    raise Exception(_("Already Verified!"))
+
+                serializer = self.serializer_class(verification, data=request.data, partial=True)
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                image_path = verification.document.path
+
+                # service = KYCVerificationService(image_path, request.user)
+                # result = service.verify()
+                result = True
+
+                provider.is_verified = result.get('verified', False)
+                provider.save(update_fields=["is_verified"])
+                verification.is_verified = result.get('verified', False)
+                verification.status = DocumentStatus.APPROVED if result.get('verified', False) else result.get("status", DocumentStatus.FAILED)
+                verification.save(update_fields=["is_verified", "status"])            
+                return Response(
+                    {
+                        "status": True,
+                        "kyc_result": result
+                    },
+                    status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class ProviderAddressUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            if not self.request.user.hasServiceProviderProfile:
+                raise Exception("This user have no provider profile.")
+            provider = request.user.hasServiceProviderProfile
+            data = request.data
+            address_object_id = data.get("address_object_id", None)
+            if address_object_id is None:
+                raise Exception("Address object id is required.")
+            address = get_object_or_404(
+                Address, id=address_object_id, user=request.user
+            )
+            if not address:
+                raise Exception("Address not found with this id for this user.")
+            provider.office_location = address
+            provider.save(update_fields=["office_location"])
+            return Response(
+                {
+                    "status": True,
+                    "message": "Office location updated successfully."
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
     serializer_class = HelperWeeklyAvailabilitySerializer
     permission_classes = [IsAuthenticated]
@@ -523,7 +532,6 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
         return HelperWeeklyAvailability.objects.filter(provider=self.request.user.service_provider_profile)
     
     def list(self, request, *args, **kwargs):
-        print("weekly_day_list: ", self.weekly_day_list)
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
         return Response(
@@ -628,23 +636,13 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
         from core.services.slot_status_engine import SlotStatusEngine
         try:
             provider = request.user.service_provider_profile
-
-            # Parse Date
             date_obj = datetime.strptime(date, "%d-%m-%Y").date()
             weekday = date_obj.strftime("%a")
 
             # Load Weekly Availability and show "No available slots for this date." if no availability for this date
-            availability = HelperWeeklyAvailability.objects.filter(
-                provider=provider,
-                day=weekday
-                ).first()
+            availability = HelperWeeklyAvailability.objects.filter(provider=provider, day=weekday).first()
             slot_duration = availability.slot_duration_minutes if availability else 60
-
-            # Load Bookings (Orders)
-            
-            # Full day Time Range (00:00 → 23:59)
-            # day_start = datetime.combine(date_obj, datetime.min.time())
-            # day_end = datetime.combine(date_obj, datetime.max.time())
+            # Full Day Slot Generation (12:00 AM to 11:59 PM)
             day_start = datetime.combine(date_obj, datetime.min.time())
             day_end = datetime.combine(date_obj + timedelta(days=1), datetime.min.time())
             
@@ -687,14 +685,209 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
             )
 
 
+    # Specific Time Slot Exception
+    @action(detail=False, methods=["post"], url_path="slot-exception/(?P<date>[^/.]+)")
+    def add_slot_exception(self, request, date):
+        try:
+            with transaction.atomic():
+                data = request.data
+                start_time = data.get("start_time")
+                end_time = data.get("end_time")
+                is_available = data.get("is_available")
+
+                if not date or not start_time or not end_time:
+                    raise Exception("Date, start time and end time are required.")
+                elif self.convert_to_24h(start_time) >= self.convert_to_24h(end_time):
+                    raise Exception("Start time must be before end time.")
+                
+                excep, created = HelperSlotException.objects.get_or_create(
+                    provider=request.user.service_provider_profile,
+                    date=datetime.strptime(date, "%d-%m-%Y").date(),
+                    start_time=self.convert_to_24h(start_time),
+                    end_time=self.convert_to_24h(end_time)
+                )
+                excep.type = HelperSlotExceptionType.AVAILABLE if is_available is True else HelperSlotExceptionType.UNAVAILABLE
+                excep.save()
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Slot exception added successfully."
+                    }, status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+    # Specific Date Availability
+    @action(detail=False, methods=["post"], url_path="special-date/(?P<date>[^/.]+)")
+    def special_date(self, request, date):
+        try:
+            with transaction.atomic():
+                data = request.data
+                start_time = data.get("start_time")
+                end_time = data.get("end_time")
+                description = data.get("description", "")
+                date_status = data.get("date_status", "").upper()
+
+                if not date or not start_time or not end_time:
+                    raise Exception("Date, start time and end time are required.")
+                elif self.convert_to_24h(start_time) >= self.convert_to_24h(end_time):
+                    raise Exception("Start time must be before end time.")
+                elif date_status not in [DateStatus.AVAILABLE, DateStatus.UNAVAILABLE]:
+                    raise Exception("Invalid date status.")
+                
+                HelperSpecialDate.objects.update_or_create(
+                    provider=request.user.service_provider_profile,
+                    date=datetime.strptime(date, "%d-%m-%Y").date(),
+                    defaults={
+                        'start_time': self.convert_to_24h(start_time),
+                        'end_time': self.convert_to_24h(end_time),
+                        'description': description,
+                        'date_status': date_status,
+                    }
+                )
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Special date added successfully."
+                    }, status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+class NextJobOrdersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from task.serializers import OrderSerializer
+        try:
+            provider = request.user.hasServiceProviderProfile
+            next_orders = Order.objects.filter(
+                provider=provider,
+                status__in=[OrderStatus.ACCEPT, OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]
+            ).order_by('working_date')[:3]
+            serializer = OrderSerializer(next_orders, many=True, context={"request": request})
+            return Response(
+                {
+                    "status": True,
+                    "data": serializer.data
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class ProviderEarningsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_reports(self, provider):
+        now = timezone.now()
+        last_7_days = now - timedelta(days=7)
+        last_30_days = now - timedelta(days=30)
+
+        last_7_total = PaymentTransaction.objects.filter(
+            user=self.request.user,
+            provider=provider,
+            action=PaymentAction.SEND_PROVIDER,
+            created_at__gte=last_7_days
+        ).aggregate(
+            total=Sum("amount")
+        )["total"] or 0
+
+        last_30_total = PaymentTransaction.objects.filter(
+            user=self.request.user,
+            provider=provider,
+            action=PaymentAction.SEND_PROVIDER,
+            created_at__gte=last_30_days
+        ).aggregate(
+            total=Sum("amount")
+        )["total"] or 0
+
+        return {
+            "last_7_total": last_7_total,
+            "last_30_total": last_30_total
+        }
+
+    def get(self, request):
+        try:
+            with transaction.atomic():
+                provider = request.user.hasServiceProviderProfile
+                if not provider:
+                    raise Exception("This user have no provider profile.")
+                helper_earnings, created = HelperWallet.objects.get_or_create(provider=request.user.hasServiceProviderProfile)
+                return Response(
+                    {
+                        "status": True,
+                        "data": ProviderEarningsViewSerializer(helper_earnings).data,
+                        "reports": self.get_reports(provider)
+                    }, status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+class ProviderEarningsTransactionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_grouped_data(self, data, transactions):
+        grouped_data = defaultdict(list)
+        for item in data:
+            date_key = timezone.localtime(
+                transactions.get(id=item["id"]).created_at
+            ).strftime("%d-%m-%Y")
+            grouped_data[date_key].append(item)
+        return grouped_data
+
+    def get(self, request):
+        try:
+            provider = request.user.hasServiceProviderProfile
+            if not provider:
+                raise Exception("This user have no provider profile.")
+            
+            transactions = PaymentTransaction.objects.filter(user=request.user, provider=provider, action=PaymentAction.SEND_PROVIDER).select_related(
+                "customer", "provider", "order"
+            ).order_by("-created_at")
+
+            serializer = PaymentTransactionDetailSerializer(transactions, many=True, context={"request": request})
+            grouped_data = self.get_grouped_data(serializer.data, transactions)
+            return Response(
+                {
+                    "status": True,
+                    "data": grouped_data
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
 
 # Helper/Provider User Related API Views End==================================
 # ===============================================================================
 
+
 # ===============================================================================
 # Customer User Related API Views Start================================
-from task.models import Order, ReviewAndRating
-from .models import ActivityLog
 class MyActivityViews(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -809,7 +1002,7 @@ class GetMyReferralCodeView(APIView):
         )
 
 class RecommendationHelperViewSet(UpdateReadOnlyModelViewSet):
-    serializer_class = ProviderSerializer
+    serializer_class = CurrentUserHelperSerializer
     permission_classes = [IsAuthenticated]
 
     def get_current_location_lat_lng(self):

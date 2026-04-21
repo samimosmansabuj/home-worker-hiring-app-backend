@@ -1,6 +1,6 @@
 from django.urls import path, include
 from .views import (
-    GetMyReferralCodeView, HelperWeeklyAvailabilityViewSet, MyActivityViews, RecommendationHelperViewSet, ReviewAndRatingProfileViewSet, UserAddressViews, ProviderVerificationViews, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView, ProviderAddressUpdateView, CurrentUserInfoView, CurrentUserHelperView, CreateUserHelperView, SaveHelperProfileViews
+    GetMyReferralCodeView, HelperWeeklyAvailabilityViewSet, MyActivityViews, NextJobOrdersView, ProviderEarningsTransactionsView, ProviderEarningsView, RecommendationHelperViewSet, ReviewAndRatingProfileViewSet, UserAddressViews, ProviderVerificationViews, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView, ProviderAddressUpdateView, CurrentUserInfoView, CurrentUserHelperView, CreateUserHelperView, SaveHelperProfileViews
 )
 from .auth_views import (
     PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, GoogleLoginAPIView, SignUpOTPResend
@@ -62,6 +62,9 @@ urlpatterns = [
     path("create-helper-profile/", CreateUserHelperView.as_view(), name="create-helper-profile"),
     path("provider-address-update/", ProviderAddressUpdateView.as_view(), name="provider-address-update"),
     path("provider-verification/", ProviderVerificationViews.as_view(), name="provider-verification"),
+    path("provider/next-job-orders/", NextJobOrdersView.as_view(), name="next-job-orders"),
+    path("provider/earnings-overview/", ProviderEarningsView.as_view(), name="provider-earnings-overview"),
+    path("provider/earnings-transactions/", ProviderEarningsTransactionsView.as_view(), name="provider-earnings-transactions"),
     # path("helper-weekly-availability/", HelperWeeklyAvailabilityViewSet.as_view({'get': 'list', 'post': 'create'}), name="helper-weekly-availability"),
     
 

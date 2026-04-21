@@ -49,15 +49,8 @@ class Order(models.Model):
     payment_status = models.CharField(max_length=20, choices=OrderPaymentStatus.choices, default=OrderPaymentStatus.UNPAID)
     working_date = models.DateField(blank=True, null=True)
     working_start_time = models.TimeField(blank=True, null=True)
-    working_hour = models.PositiveIntegerField(default=60)
+    working_hour = models.PositiveIntegerField(default=1)
     confirmation_OTP = models.CharField(max_length=6, blank=True, null=True)
-
-    payment_transactions = GenericRelation(
-        "task.PaymentTransaction",
-        content_type_field="entity_type",
-        object_id_field="entity_id",
-        related_query_name="order"
-    )
     
     accepted_at = models.DateTimeField(blank=True, null=True)
     started_at = models.DateTimeField(blank=True, null=True)
@@ -67,7 +60,11 @@ class Order(models.Model):
 
     @property
     def end_time(self):
-        return (datetime.combine(date.today(), self.working_start_time) + timedelta(minutes=self.working_hour)).time()
+        return (datetime.combine(self.working_date, self.working_start_time) + timedelta(hours=self.working_hour)).time()
+    
+    @property
+    def end_datetime(self):
+        return datetime.combine(self.working_date, self.working_start_time) + timedelta(hours=self.working_hour)
     
     def save(self, *args, **kwargs):
         is_status_changed = False
@@ -98,14 +95,14 @@ class OrderChangesRequest(models.Model):
 
 class ReviewAndRating(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="order_review")
-    customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, blank=True, null=True)
-    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, blank=True, null=True)
+    customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, blank=True, null=True, related_name="customer_reviews")
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, blank=True, null=True, related_name="provider_reviews")
     send_by = models.CharField(max_length=20, default=UserDefault.CUSTOMER, choices=UserDefault.choices)
 
     rating = models.IntegerField(choices=ReviewRatingChoice.choices, default=ReviewRatingChoice.FIVE)
     review = models.CharField(max_length=255, blank=True, null=True)
     is_approved = models.BooleanField(default=False)
-    created = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now=True)
     updated_at = models.DateTimeField(auto_now=True)
 
 class OrderRefundRequest(models.Model):
@@ -152,18 +149,27 @@ class AdminWallet(models.Model):
         return f"Payment Balance: {self.payment_balance} | Current Balance: {self.current_balance} | Hold Balance: {self.hold_balance} | Total Withdraw: {self.total_withdraw}"
 
 class PaymentTransaction(models.Model):
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True)
+    # related object fields 
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
+    customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
+    order = models.ForeignKey(Order, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
+
+    # payment and transaction fields
     payment_id = models.CharField(max_length=50, blank=True, null=True, unique=True, editable=False)
     transaction_id = models.CharField(max_length=50, blank=True, null=True, unique=True, editable=False)
     amount = models.DecimalField(max_digits=9, decimal_places=2)
     currency = models.CharField(max_length=20, choices=PaymentCurrencyType.choices, default=PaymentCurrencyType.CA)
-    type = models.CharField(max_length=20, choices=PaymentTransactionType.choices)
     payment_information = models.JSONField(blank=True, null=True)
-    reference = models.CharField(max_length=255, blank=True, null=True)
+
+    # object related fields------
+    type = models.CharField(max_length=20, choices=PaymentTransactionType.choices)
     action = models.CharField(max_length=50, choices=PaymentAction.choices, blank=True, null=True)
+    reference = models.CharField(max_length=255, blank=True, null=True)
+
     # reference object------
     entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
-    entity_id = models.PositiveBigIntegerField()
+    entity_id = models.PositiveBigIntegerField(blank=True, null=True)
     service = GenericForeignKey('entity_type', 'entity_id')
 
     created_at = models.DateTimeField(auto_now_add=True)

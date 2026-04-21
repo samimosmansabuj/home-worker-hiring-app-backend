@@ -148,6 +148,7 @@ class HelperStrike(models.Model):
     expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+
 class HelperWeeklyAvailability(models.Model):
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="weekly_availability")
     day = models.CharField(max_length=10, choices=WeekDay.choices)
@@ -179,7 +180,14 @@ class HelperSpecialDate(models.Model):
     start_time = models.TimeField(null=True, blank=True)
     end_time = models.TimeField(null=True, blank=True)
 
+    def clean(self):
+        if self.start_time >= self.end_time:
+            raise ValidationError("Invalid special date time range")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        if self.start_time >= self.end_time:
+            raise ValidationError("Invalid exception time range")
 
 class HelperSlotException(models.Model):
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="slot_exceptions")
@@ -189,14 +197,15 @@ class HelperSlotException(models.Model):
     end_time = models.TimeField()
     reason = models.CharField(max_length=255, blank=True, null=True)
     order = models.ForeignKey("task.Order", on_delete=models.SET_NULL, blank=True, null=True)
-
     created_at = models.DateTimeField(auto_now_add=True)
 
     def clean(self):
         if self.start_time >= self.end_time:
             raise ValidationError("Invalid exception time range")
 
+
 class HelperWallet(models.Model):
+    provider = models.OneToOneField(ServiceProviderProfile, on_delete=models.CASCADE, related_name="wallet", blank=True, null=True)
     total_payout = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     upcoming_payout = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     available_payout = models.DecimalField(max_digits=12, decimal_places=2, default=0)

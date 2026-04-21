@@ -269,12 +269,7 @@ class PaymentTransactionModule:
             return True
         raise Exception("Payment Transaction not update.")
 
-# query = Q(code=otp, is_used=False, purpose=OTPType.LOGIN)
-# if phone:
-#     query &= Q(phone=phone)
-# if email:
-#     query &= Q(email=email)
-# otp_object = OTP.objects.filter(query).last()
+
 
 
 
