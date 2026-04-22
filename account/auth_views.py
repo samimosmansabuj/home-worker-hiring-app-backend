@@ -1,20 +1,22 @@
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenVerifyView, TokenRefreshView
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .serializers import (
     LoginOTPRequestSerializer, LoginOTPVerifySerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, SignupSerializer, CustomTokenObtainPairSerializer
 )
+from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from .models import OTP
-from find_worker_config.model_choice import OTPType, UserRole
+from find_worker_config.model_choice import OTPType, UserRole, LogStatus
 from django.core.files.base import ContentFile
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.request import Request
 from rest_framework.exceptions import ValidationError
-from django.utils import timezone
 from find_worker_config.utils import LogActivityModule
+from .utils import  get_otp_object
+from django.shortcuts import get_object_or_404
+from account.models import User
 
 
 
@@ -276,19 +278,32 @@ class SignUpOTPVerifyView(APIView):
             )
 # -------------------------------------------------
 class SignUpViews(APIView):
+    def create_log(self, user):
+        data = {
+            "user": user,
+            "action": "New Registration",
+            "entity": user,
+            "request": self.request,
+            "metadata": {"registration_method": "User Registration & Verify"}
+        }
+        log = LogActivityModule(data)
+        log.create()
+    
     def post(self, request, *args, **kwargs):
         try:
-            serializer = SignupSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            email = serializer.send_code()
-            return Response(
-                {
-                    "status": True,
-                    "message": "OTP send to your email address.",
-                    "data": email
-                }, status=status.HTTP_200_OK
-            )
+            with transaction.atomic():
+                serializer = SignupSerializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                user = serializer.save()
+                email = serializer.send_code()
+                self.create_log(user)
+                return Response(
+                    {
+                        "status": True,
+                        "message": "OTP send to your email address.",
+                        "data": email
+                    }, status=status.HTTP_200_OK
+                )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             return Response(
@@ -306,13 +321,14 @@ class SignUpViews(APIView):
             )
 
 class UserSignUpOTPVerifyView(APIView):
-    def create_log(self, user, action, entity, metadata={}):
+    def create_log(self, user, log_status):
         data = {
             "user": user,
-            "action": action,
-            "entity": entity,
+            "action": "Account Verification",
+            "status": log_status,
+            "entity": user,
             "request": self.request,
-            "metadata": {"login_method": "User Registration & Verify"}
+            "metadata": {"account_verify": "User Registration & Verify"}
         }
         log = LogActivityModule(data)
         log.create()
@@ -328,7 +344,7 @@ class UserSignUpOTPVerifyView(APIView):
                     raise Exception("Not get user using this OTP.")
                 user.is_email_verified=True
                 user.save()
-                self.create_log(user, "New Registration & Verify", user)
+                self.create_log(user, LogStatus.SUCCESS)
             return Response(
                 {
                     "status": True,
@@ -336,6 +352,7 @@ class UserSignUpOTPVerifyView(APIView):
                 }, status=status.HTTP_200_OK
             )
         except ValidationError:
+            # self.create_log(self.request.user, LogStatus.FAILED)
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
             return Response(
                 {
@@ -344,6 +361,7 @@ class UserSignUpOTPVerifyView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            # self.create_log(self.request.user, LogStatus.FAILED)
             return Response(
                 {
                     "status": False,
@@ -352,7 +370,18 @@ class UserSignUpOTPVerifyView(APIView):
             )
 
 class SignUpOTPResend(APIView):
-
+    def create_log(self, user, log_status):
+        data = {
+            "user": user,
+            "action": "Verification OTP Resend",
+            "status": log_status,
+            "entity": user,
+            "request": self.request,
+            "metadata": {"verification_otp_resend": "User Registration & Verify"}
+        }
+        log = LogActivityModule(data)
+        log.create()
+    
     def get_user_by_email(self, email):
         return get_object_or_404(User, email=email)
 
@@ -374,6 +403,7 @@ class SignUpOTPResend(APIView):
             if not email:
                 raise Exception("Need email for resend email!")
             self.send_code(email)
+            self.create_log(self.get_user_by_email(email), LogStatus.SUCCESS)
             return Response(
                 {
                     "status": True,

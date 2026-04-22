@@ -14,10 +14,9 @@ from .serializers import (
 from core.models import AddOfferVoucher
 # from .utils import generate_otp, KYCVerificationService
 from django.db.models import F, Q, Avg, ExpressionWrapper, FloatField, Sum, Value
-from django.db.models.functions import Coalesce
 from rest_framework.viewsets import GenericViewSet
 from find_worker_config.model_choice import (
-    DateStatus, OrderStatus, UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, DayStatus, HelperSlotExceptionType, PaymentAction
+    DateStatus, OrderStatus, UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, DayStatus, HelperSlotExceptionType, PaymentAction, LogStatus
 )
 from .models import ProviderVerification
 from .utils import generate_otp, get_otp_object
@@ -58,13 +57,14 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = CurrentUserInfoSerializer
 
-    def create_log(self):
+    def create_log(self, log_status, errro=None):
         data = {
             "user": self.request.user,
             "action": "Profile Update",
+            "status": log_status,
             "entity": self.request.user,
             "request": self.request,
-            "metadata": {}
+            "metadata": {"update_method": "Profile Update", "error": errro}
         }
         log = LogActivityModule(data)
         log.create()
@@ -118,7 +118,7 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
                 if getattr(instance, '_prefetched_objects_cache', None):
                     instance._prefetched_objects_cache = {}
                 
-                self.create_log()
+                self.create_log(LogStatus.SUCCESS)
                 return Response(
                     {
                         "status": True,
@@ -126,11 +126,20 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
                     }
                 )
         except ValidationError as e:
+            self.create_log(LogStatus.FAILED)
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
             return Response(
                 {
                     "status": False,
                     "message": error
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            self.create_log(LogStatus.FAILED, str(e))
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
                 }, status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -139,6 +148,18 @@ class UserAddressViews(UpdateModelViewSet):
     queryset = Address.objects.all()
     serializer_class = UserAddressSerializer
     permission_classes = [IsAuthenticated]
+
+    def create_log(self, action, log_status, entity=None, errro=None):
+        data = {
+            "user": self.request.user,
+            "action": action,
+            "status": log_status,
+            "entity": entity,
+            "request": self.request,
+            "metadata": {"update_method": action, "error": errro}
+        }
+        log = LogActivityModule(data)
+        log.create()
 
     def get_user(self):
         return self.request.user
@@ -169,25 +190,14 @@ class UserAddressViews(UpdateModelViewSet):
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    def create_log(self, entity, action):
-        data = {
-            "user": self.request.user,
-            "action": action,
-            "entity": entity,
-            "request": self.request,
-            "metadata": {}
-        }
-        log = LogActivityModule(data)
-        log.create()
-
     def perform_create(self, serializer):
         address_serializer = serializer.save(is_default=True)
-        self.create_log(address_serializer, "Add new address")
+        self.create_log("Add new address", LogStatus.SUCCESS, address_serializer)
         return address_serializer
     
     def perform_update(self, serializer):
         address_serializer = serializer.save(is_default=True)
-        self.create_log(address_serializer, "Update address")
+        self.create_log("Update address", LogStatus.SUCCESS, address_serializer)
         return address_serializer
 
     def perform_retrieve(self, serializer):

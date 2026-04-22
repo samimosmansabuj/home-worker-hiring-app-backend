@@ -2,7 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Q
-from find_worker_config.model_choice import  DateStatus, DayStatus, HelperSlotExceptionType, HelperStatus, UserRole, UserLanguage, UserStatus, PaymentMethodType, PayoutMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay
+from find_worker_config.model_choice import  DateStatus, DayStatus, HelperSlotExceptionType, HelperStatus, UserRole, UserLanguage, UserStatus, PaymentMethodType, PayoutMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, LogStatus
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -434,12 +434,15 @@ class ProviderVerification(models.Model):
 
 # Logs Model==============================================
 class ActivityLog(models.Model):
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     user_type = models.CharField(max_length=30, choices=UserDefault.choices, blank=True, null=True)
     action = models.CharField(max_length=255)
+    status = models.CharField(max_length=20, choices=LogStatus.choices, default=LogStatus.SUCCESS)
+
     entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
     entity_id = models.PositiveBigIntegerField(blank=True, null=True)
     service = GenericForeignKey('entity_type', 'entity_id')
+    
     metadata = models.JSONField(default=dict)
     ip_address = models.GenericIPAddressField()
     created_at = models.DateTimeField(auto_now_add=True)

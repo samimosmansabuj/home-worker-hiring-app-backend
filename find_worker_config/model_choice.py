@@ -197,3 +197,13 @@ class TicketUserProfileType(models.TextChoices):
     PROVIDER = "PROVIDER", _("Provider")
 
 
+
+
+# ==================================================================================
+# ==================================================================================
+class LogStatus(models.TextChoices):
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
+
+

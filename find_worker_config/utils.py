@@ -8,6 +8,8 @@ from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
 from account.models import ActivityLog
 from chat_notify.models import Notification
+from ipware import get_client_ip
+from django.db import transaction
 
 class UpdateModelViewSet(ModelViewSet):
     delete_message = "Object Successfully Deleted!"
@@ -44,15 +46,16 @@ class UpdateModelViewSet(ModelViewSet):
     
     def create(self, request, *args, **kwargs):
         try:
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            self.perform_create(serializer)
-            return Response(
-                {
-                    'status': True,
-                    'data': serializer.data
-                }, status=status.HTTP_201_CREATED
-            )
+            with transaction.atomic():
+                serializer = self.get_serializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                self.perform_create(serializer)
+                return Response(
+                    {
+                        'status': True,
+                        'data': serializer.data
+                    }, status=status.HTTP_201_CREATED
+                )
         except exceptions.ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             return Response(
@@ -78,17 +81,18 @@ class UpdateModelViewSet(ModelViewSet):
     
     def update(self, request, *args, **kwargs):
         try:
-            object = self.get_object()
-            serializer = self.get_serializer(object, data=request.data, partial=True)
-            serializer.is_valid(raise_exception=True)
-            self.perform_update(serializer)
-            return Response(
-                {
-                    'status': True,
-                    'data': serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
+            with transaction.atomic():
+                object = self.get_object()
+                serializer = self.get_serializer(object, data=request.data, partial=True)
+                serializer.is_valid(raise_exception=True)
+                self.perform_update(serializer)
+                return Response(
+                    {
+                        'status': True,
+                        'data': serializer.data
+                    },
+                    status=status.HTTP_200_OK
+                )
         except exceptions.ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             return Response(
@@ -100,13 +104,14 @@ class UpdateModelViewSet(ModelViewSet):
             )
     
     def destroy(self, request, *args, **kwargs):
-        super().destroy(request, *args, **kwargs)
-        return Response(
-            {
-                'status': True,
-                'message': self.delete_message,
-            }, status=status.HTTP_200_OK
-        )
+        with transaction.atomic():
+            super().destroy(request, *args, **kwargs)
+            return Response(
+                {
+                    'status': True,
+                    'message': self.delete_message,
+                }, status=status.HTTP_200_OK
+            )
 
 class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
     def retrieve(self, request, *args, **kwargs):
@@ -140,6 +145,20 @@ class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
+
+
+
+# def create_log(self, user, action, entity, metadata={}):
+#     data = {
+#         "user": user,
+#         "action": action,
+#         "entity": entity,
+#         "request": self.request,
+#         "metadata": {"login_method": "User Registration & Verify"}
+#     }
+#     log = LogActivityModule(data)
+#     log.create()
 class LogActivityModule:
     def get_confirm_data(self, field, field_name):
         if not field:
@@ -148,11 +167,11 @@ class LogActivityModule:
     
     def __init__(self, data: dict):
         user = data.get("user")
-        print("user: ", user)
         if hasattr(user, "user"):
             user = user.user
         self.user = self.get_confirm_data(user, "User")
         self.action = self.get_confirm_data(data.get("action"), "Action")
+        self.status = self.get_confirm_data(data.get("status"), "Status")
         self.entity = data.get("entity")
         self.request = self.get_confirm_data(data.get("request"), "Request")
         self.metadata = data.get("metadata", {})
@@ -171,11 +190,21 @@ class LogActivityModule:
         if xff:
             return xff.split(",")[0]
         return request.META.get("REMOTE_ADDR")
+    
+    # def get_client_ip(self, request):
+    #     x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    #     if x_forwarded_for:
+    #         ip = x_forwarded_for.split(",")[0].strip()
+    #     else:
+    #         ip = request.META.get("REMOTE_ADDR")
+    #     print("ip: ", ip)
+    #     return ip
 
     def get_data(self):
         dict_data = {
             "user": self.user,
             "action": self.action,
+            "status": self.status,
             "metadata": self.metadata,
             "ip_address": self.get_ip(self.request),
             "need_notify": self.need_notify
