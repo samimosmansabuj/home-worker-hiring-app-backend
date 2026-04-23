@@ -17,17 +17,18 @@ from find_worker_config.utils import LogActivityModule
 from .utils import  get_otp_object
 from django.shortcuts import get_object_or_404
 from account.models import User
+from django.db.models import Q
 
 
 
 class PasswordLoginViews(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
-    def create_log(self, user, action, entity, metadata={}):
-        # user, action, entity, metadata, request
+    def create_log(self, user, log_status):
         data = {
             "user": user,
-            "action": action,
-            "entity": entity,
+            "action": "New Login",
+            "status": log_status,
+            "entity": user,
             "request": self.request,
             "metadata": {"login_method": "password"}
         }
@@ -39,9 +40,9 @@ class PasswordLoginViews(TokenObtainPairView):
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             user = serializer.get_user()
-            self.create_log(user, "New Login", user)
             data = serializer.validated_data
             data["default_profile"] = user.default_profile
+            self.create_log(user, LogStatus.SUCCESS)
             return Response(
                 {
                     "status": True,
@@ -66,19 +67,33 @@ class PasswordLoginViews(TokenObtainPairView):
 
 # Login With OTP Start===========================
 class LoginOTPRequestView(APIView):
+    def create_log(self, log_status, action=None, user=None, entity=None, error=None):
+        data = {
+            "user": user,
+            "action": "Login OTP Send",
+            "status": log_status,
+            "entity": user,
+            "request": self.request,
+            "metadata": {"login_method": "otp send", "error": error}
+        }
+        log = LogActivityModule(data)
+        log.create()
+    
     def post(self, request):
         try:
             serializer = LoginOTPRequestSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
+            self.create_log(log_status=LogStatus.SUCCESS, user=serializer.get_user())
             return Response(
                 {
                     "status": True,
                     "message": "OTP sent",
-                    "data": serializer.create_otp_object()
+                    "data": serializer.send_otp()
                 }, status=status.HTTP_200_OK
             )
         except ValidationError:
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
+            self.create_log(LogStatus.FAILED)
             return Response(
                 {
                     "status": False,
@@ -86,6 +101,7 @@ class LoginOTPRequestView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            self.create_log(LogStatus.FAILED, error=str(e))
             return Response(
                 {
                     "status": False,
@@ -94,6 +110,19 @@ class LoginOTPRequestView(APIView):
             )
 
 class LoginOTPVerifyView(APIView):
+    def create_log(self, log_status, action=None, user=None, entity=None, error=None, for_notify=None):
+        data = {
+            "user": user,
+            "action": "Login OTP Verify",
+            "status": log_status,
+            "entity": user,
+            "request": self.request,
+            "for_notify": for_notify,
+            "metadata": {"login_method": "otp verify", "error": error}
+        }
+        log = LogActivityModule(data)
+        log.create()
+    
     def get_otp_object(self, data):
         otp = data.get("otp")
         email = data.get("email")
@@ -115,17 +144,6 @@ class LoginOTPVerifyView(APIView):
         otp_object.is_used = True
         otp_object.save(update_fields=["is_used"])
         return otp_object
-
-    def create_log(self, user, action, entity, metadata={}):
-        data = {
-            "user": user,
-            "action": action,
-            "entity": entity,
-            "request": self.request,
-            "metadata": {"login_method": "OTP Login"}
-        }
-        log = LogActivityModule(data)
-        log.create()
     
     def post(self, request):
         try:
@@ -133,7 +151,7 @@ class LoginOTPVerifyView(APIView):
                 serializer = LoginOTPVerifySerializer(data=request.data)
                 serializer.is_valid(raise_exception=True)
                 otp = self.get_otp_object(serializer.validated_data)
-                self.create_log(otp.user, "New Login", otp.user)
+                self.create_log(log_status=LogStatus.SUCCESS, user=otp.user, entity=otp, for_notify=True)
                 return Response(
                     {
                         "status": True,
@@ -142,6 +160,7 @@ class LoginOTPVerifyView(APIView):
                 )
         except ValidationError:
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
+            self.create_log(log_status=LogStatus.FAILED)
             return Response(
                 {
                     "status": False,
@@ -149,6 +168,7 @@ class LoginOTPVerifyView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            self.create_log(log_status=LogStatus.FAILED, error=str(e))
             return Response(
                 {
                     "status": False,
@@ -641,14 +661,15 @@ class UpdateTokenRefreshView(TokenRefreshView):
 
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
-    def create_log(self):
+
+    def create_log(self, log_status, error=None):
         data = {
-            "user": self.request.user,
+            "user": self.request.user or None,
             "action": "Password Change",
-            "entity": self.request.user,
+            "status": log_status,
+            "entity": self.request.user or None,
             "request": self.request,
-            "metadata": {},
-            "for_notify": True
+            "metadata": {"password_change": "otp verify", "error": error}
         }
         log = LogActivityModule(data)
         log.create()
@@ -659,7 +680,7 @@ class ChangePasswordView(APIView):
                 serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
                 serializer.is_valid(raise_exception=True)
                 serializer.set_password()
-                self.create_log()
+                self.create_log(LogStatus.SUCCESS)
                 return Response(
                     {
                         "status": True,
@@ -669,6 +690,7 @@ class ChangePasswordView(APIView):
                 )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            self.create_log(LogStatus.FAILED)
             return Response(
                 {
                     "status": False,
@@ -677,6 +699,7 @@ class ChangePasswordView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            self.create_log(LogStatus.FAILED, error=str(e))
             return Response(
                 {
                     "status": False,
@@ -686,21 +709,36 @@ class ChangePasswordView(APIView):
             )
 
 class PasswordResetRequestView(APIView):
+    def create_log(self, log_status, user=None, entity=None, error=None, for_notify=False):
+        data = {
+            "user": user,
+            "action": "Password Reset Request",
+            "status": log_status,
+            "entity": entity,
+            "for_notify": for_notify,
+            "request": self.request,
+            "metadata": {"password_reset": "password reset request", "error": error}
+        }
+        log = LogActivityModule(data)
+        log.create()
+    
     def post(self, request):
         try:
             serializer = PasswordResetRequestSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
-            send_to = serializer.send_code()
+            otp_obect = serializer.send_code()
+            self.create_log(LogStatus.SUCCESS, user=serializer.get_user(), entity=otp_obect, for_notify=True)
             return Response(
                 {
                     "status": True,
                     "message": "OTP send for reset your password.",
-                    "send_to": send_to
+                    "send_to": otp_obect.email if otp_obect.email else otp_obect.phone
                 },
                 status=status.HTTP_200_OK
             )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            self.create_log(LogStatus.FAILED)
             return Response(
                 {
                     "status": False,
@@ -709,6 +747,7 @@ class PasswordResetRequestView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            self.create_log(LogStatus.FAILED, error=str(e))
             return Response(
                 {
                     "status": False,
@@ -718,12 +757,26 @@ class PasswordResetRequestView(APIView):
             )
 
 class PasswordResetConfirmView(APIView):
+    def create_log(self, log_status, user=None, entity=None, error=None, for_notify=False):
+        data = {
+            "user": user,
+            "action": "Password Reset Request",
+            "status": log_status,
+            "entity": entity,
+            "for_notify": for_notify,
+            "request": self.request,
+            "metadata": {"password_reset": "password reset request", "error": error}
+        }
+        log = LogActivityModule(data)
+        log.create()
+    
     def post(self, request):
         try:
             serializer = PasswordResetConfirmSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             otp = get_otp_object(serializer.validated_data, OTPType.RESET_PASSWORD)
             serializer.set_new_password(otp.user)
+            self.create_log(LogStatus.SUCCESS, user=otp.user, entity=otp, for_notify=True)
             return Response(
                 {
                     "status": True,
@@ -733,6 +786,7 @@ class PasswordResetConfirmView(APIView):
             )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            self.create_log(LogStatus.FAILED)
             return Response(
                 {
                     "status": False,
@@ -741,6 +795,7 @@ class PasswordResetConfirmView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            self.create_log(LogStatus.FAILED, error=str(e))
             return Response(
                 {
                     "status": False,

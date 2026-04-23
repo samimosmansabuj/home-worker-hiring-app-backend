@@ -17,7 +17,7 @@ class ServiceCategoryField(serializers.ListField):
             {"id": c.id, "title": c.title} for c in value.all()
         ]
 
-class CurrentUserHelperSerializer(serializers.ModelSerializer):
+class HelperSerializer(serializers.ModelSerializer):
     service_category = ServiceCategoryField(required=True)
     company_name = serializers.CharField(required=True)
     hourly_rate = serializers.DecimalField(required=True, max_digits=9, decimal_places=2)
@@ -29,7 +29,7 @@ class CurrentUserHelperSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ServiceProviderProfile
-        fields = ["company_name", "logo", "details", "hourly_rate", "min_booking_hours", "office_location", "strike_count", "account_status", "availability_status", "is_verified", "complete_rate", "total_jobs", "rating", "distance_km", "service_category", "portfolio", "reviews_and_ratings"]
+        fields = ["id", "company_name", "logo", "details", "hourly_rate", "min_booking_hours", "office_location", "strike_count", "account_status", "availability_status", "is_verified", "complete_rate", "total_jobs", "rating", "distance_km", "service_category", "portfolio", "reviews_and_ratings"]
         read_only_fields = ["office_location", "strike_count", "account_status", "is_verified", "complete_rate", "total_jobs", "rating"]
     
     def get_reviews_and_ratings(self, obj):

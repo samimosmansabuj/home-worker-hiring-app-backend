@@ -9,6 +9,7 @@ def create_log_notification(sender, instance, created, **kwargs):
     if created and instance.need_notify:
         notification = Notification.objects.create(
             received=instance.user,
+            profile=instance.user_type,
             action=instance.action,
             entity_type=instance.entity_type,
             entity_id=instance.entity_id,

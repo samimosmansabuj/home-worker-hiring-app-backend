@@ -137,6 +137,7 @@ class ServiceProviderProfile(models.Model):
     complete_rate = models.FloatField(default=0)
     total_jobs = models.PositiveIntegerField(default=0)
     rating = models.FloatField(default=0)
+    total_profile_view = models.PositiveBigIntegerField(default=0)
     
     def __str__(self):
         return f"{self.user.username} - Provider Profile"
@@ -451,7 +452,7 @@ class ActivityLog(models.Model):
     def __str__(self):
         # return f"{self.user.username} {self.action} "
         username = self.user.username if self.user else None
-        return f"{self.created_at} - {username} - {self.action}"
+        return f"{self.created_at} - {username} - {self.action} | {self.status}"
 
 
 # Referral & Vouchar Model========================================

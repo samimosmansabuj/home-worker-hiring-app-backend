@@ -112,6 +112,7 @@ class UpdateModelViewSet(ModelViewSet):
                     'message': self.delete_message,
                 }, status=status.HTTP_200_OK
             )
+    
 
 class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
     def retrieve(self, request, *args, **kwargs):
@@ -149,13 +150,16 @@ class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
 
 
 
-# def create_log(self, user, action, entity, metadata={}):
+# def create_log(self, log_status=None, action=None, user=None, user_type=None, entity=None, error=None, for_notify=False, metadata={}):
 #     data = {
 #         "user": user,
+#         "user_type": user_type,
 #         "action": action,
+#         "status": log_status,
 #         "entity": entity,
+#         "for_notify": for_notify,
 #         "request": self.request,
-#         "metadata": {"login_method": "User Registration & Verify"}
+#         "metadata": metadata
 #     }
 #     log = LogActivityModule(data)
 #     log.create()
@@ -169,7 +173,9 @@ class LogActivityModule:
         user = data.get("user")
         if hasattr(user, "user"):
             user = user.user
-        self.user = self.get_confirm_data(user, "User")
+        # self.user = self.get_confirm_data(user, "User")
+        self.user = user
+        self.user_type = data.get("user_type")
         self.action = self.get_confirm_data(data.get("action"), "Action")
         self.status = self.get_confirm_data(data.get("status"), "Status")
         self.entity = data.get("entity")
@@ -203,6 +209,7 @@ class LogActivityModule:
     def get_data(self):
         dict_data = {
             "user": self.user,
+            "user_type": self.user_type,
             "action": self.action,
             "status": self.status,
             "metadata": self.metadata,

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import User, CustomerProfile, ServiceProviderProfile, Address, OTP, ActivityLog, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod, HelperStrike, HelperWeeklyAvailability, HelperSpecialDate, HelperSlotException, HelperWallet
+from .models import User, CustomerProfile, ServiceProviderProfile, Address, OTP, ActivityLog, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod, HelperStrike, HelperWeeklyAvailability, HelperSpecialDate, HelperSlotException, HelperWallet, SavedHelper
 # from unfold.admin import ModelAdmin
 from django.contrib import admin
 
@@ -43,6 +43,7 @@ admin.site.register(User)
 admin.site.register(CustomerProfile)
 admin.site.register(ServiceProviderProfile)
 admin.site.register(Address)
+admin.site.register(SavedHelper)
 admin.site.register(OTP)
 admin.site.register(ActivityLog)
 admin.site.register(ProviderVerification)

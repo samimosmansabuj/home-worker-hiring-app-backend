@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from .serializers import CompleteSerializer, CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, SetHourSerializer, OrderSerializerAll, StartWorkSerializer, ReviewAndRatingSerializer, CurrentUserHelperSerializer
+from .serializers import CompleteSerializer, CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, SetHourSerializer, OrderSerializerAll, StartWorkSerializer, ReviewAndRatingSerializer, HelperSerializer
 from account.models import Address, User, ServiceProviderProfile
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -22,7 +22,7 @@ from django.utils import timezone
 # ============================================================
 # Buyer/Helper List for Customer/Client===================
 class HelperListViewset(UpdateReadOnlyModelViewSet):
-    serializer_class = CurrentUserHelperSerializer
+    serializer_class = HelperSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = HelperPagination
 
@@ -166,7 +166,6 @@ class HelperListViewset(UpdateReadOnlyModelViewSet):
             # self.get_map_distance(office.lat, office.lng) # use For Google API Destination
             instance.distance_km = self.haversine(office.lat, office.lng)
         serializer = self.get_serializer(instance)
-        print("serializer: ", serializer.data)
         return self.perform_retrieve(serializer)
 
 # Buyer/Helper List for Customer/Client===================

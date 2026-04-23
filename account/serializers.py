@@ -63,7 +63,7 @@ class LoginOTPRequestSerializer(serializers.Serializer):
     def del_unused_otp_object(self):
         OTP.objects.filter(user=self.user, purpose=OTPType.LOGIN).delete()
 
-    def create_otp_object(self):
+    def send_otp(self):
         self.del_unused_otp_object()
         otp_code = generate_otp(length=6)
         otp_obj = OTP.objects.create(
@@ -237,7 +237,7 @@ class PasswordResetRequestSerializer(serializers.Serializer):
             email=self.user_email,
             purpose=OTPType.RESET_PASSWORD
         )
-        return otp.email if otp.email else otp.phone
+        return otp
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     phone = serializers.CharField(required=False)
@@ -366,6 +366,7 @@ class CurrentUserInfoSerializer(serializers.ModelSerializer):
         data["address"] = self.get_user_profile_address(instance)
         return data
 
+from task.models import ServiceCategory
 class CurrentUserHelperSerializer(serializers.ModelSerializer):
     service_category = ServiceCategoryField(required=True)
     company_name = serializers.CharField(required=True)
@@ -427,14 +428,16 @@ class CurrentUserHelperSerializer(serializers.ModelSerializer):
         ]
 
     def get_office_location(self, obj):
-        office = obj.office_location
-        return {
-            "id": office.id,
-            "address_line": office.address_line,
-            "city": office.city,
-            "lat": office.lat,
-            "lng": office.lng,
-        }
+        if obj.office_location:
+            office = obj.office_location
+            return {
+                "id": office.id,
+                "address_line": office.address_line,
+                "city": office.city,
+                "lat": office.lat,
+                "lng": office.lng,
+            }
+        return None
 
 
 # -------------------------------
@@ -474,16 +477,16 @@ class ApplyVoucherSerializer(serializers.Serializer):
         try:
             voucher = Voucher.objects.get(code=data["code"], user=request.user, is_active=True)
         except Voucher.DoesNotExist:
-            raise serializers.ValidationError("Invalid voucher")
+            raise Exception("Invalid voucher")
 
         if voucher.expiry_date < timezone.now():
-            raise serializers.ValidationError("Voucher expired")
+            raise Exception("Voucher expired")
 
         if voucher.is_used:
-            raise serializers.ValidationError("Voucher already used")
+            raise Exception("Voucher already used")
 
         if voucher.minimum_value and data["order_amount"] < voucher.minimum_value:
-            raise serializers.ValidationError("Minimum order value not met")
+            raise Exception("Minimum order value not met")
 
         data["voucher"] = voucher
         return data
