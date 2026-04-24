@@ -81,3 +81,4 @@ class SlotStatusEngine:
         #             return HelperSlotExceptionType.BOOKED
         
         return status
+

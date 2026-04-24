@@ -6,7 +6,7 @@ from rest_framework.generics import RetrieveUpdateDestroyAPIView, CreateAPIView,
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
-from job.serializers import HelperSerializer
+from job__del.serializers import HelperSerializer
 from .models import Address, CustomerProfile, HelperSlotException, HelperSpecialDate, HelperWallet, HelperWeeklyAvailability, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher, SavedHelper
 from .serializers import (
     HelperWeeklyAvailabilitySerializer, ProviderEarningsViewSerializer, ReviewAndRatingProfileSerializer, UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer, SaveHelperProfileSerializer
@@ -16,13 +16,13 @@ from core.models import AddOfferVoucher
 from django.db.models import F, Q, Avg, ExpressionWrapper, FloatField, Sum, Value
 from rest_framework.viewsets import GenericViewSet
 from find_worker_config.model_choice import (
-    DateStatus, OrderStatus, UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, DayStatus, HelperSlotExceptionType, PaymentAction, LogStatus
+    DateStatus, OrderStatus, OrderPaymentStatus , UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, DayStatus, HelperSlotExceptionType, PaymentAction, LogStatus
 )
 from .models import ProviderVerification
 from .utils import generate_otp, get_otp_object
-from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
+from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet, LogActivityModule
+from core.services.log_engine import CreateLog
 from rest_framework.permissions import IsAuthenticated
-from find_worker_config.utils import LogActivityModule
 from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth import get_user_model
@@ -525,6 +525,7 @@ class ProviderVerificationViews(APIView):
                     raise Exception(_("Already Verified!"))
 
                 serializer = self.serializer_class(verification, data=request.data, partial=True)
+                # serializer = self.serializer_class(data=request.data)
                 serializer.is_valid(raise_exception=True)
                 serializer.save()
                 image_path = verification.document.path
@@ -574,6 +575,10 @@ class ProviderAddressUpdateView(APIView):
                 raise Exception("Address not found with this id for this user.")
             provider.office_location = address
             provider.save(update_fields=["office_location"])
+            CreateLog(
+                request=request, log_status=LogStatus.SUCCESS, action="OFFICE LOCATION UPDATE", user=self.request.user, user_type=UserDefault.PROVIDER,
+                entity=address, for_notify=False, metadata={"message": "Update Your Office Location"}
+            )
             return Response(
                 {
                     "status": True,
@@ -581,6 +586,10 @@ class ProviderAddressUpdateView(APIView):
                 }, status=status.HTTP_200_OK
             )
         except Exception as e:
+            CreateLog(
+                request=request, log_status=LogStatus.FAILED, action="OFFICE LOCATION UPDATE", user=self.request.user, user_type=UserDefault.PROVIDER,
+                for_notify=False, metadata={"message": "Failed to Update Your Office Location"}
+            )
             return Response(
                 {
                     "status": False,
@@ -622,6 +631,19 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
             }, status=status.HTTP_200_OK
         )
     
+    def create_log(self, log_status=None, action=None, entity=None, for_notify=False, error=None, metadata={}):
+        data = {
+            "status": log_status,
+            "action": action,
+            "user": self.request.user,
+            "user_type": UserDefault.PROVIDER,
+            "entity": entity,
+            "for_notify": for_notify,
+            "metadata": metadata,
+            "request": self.request
+        }
+        log = LogActivityModule(data)
+        log.create()
 
 
     def check_for_set_weekly_availability(self, available_days, start_time, end_time, day_status=None):
@@ -655,6 +677,10 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                 available_day.end_time = self.convert_to_24h(end_time)
                 available_day.slot_duration_minutes = slot_duration_minutes
                 available_day.save()
+                self.create_log(
+                    log_status=LogStatus.SUCCESS, action="UPDATE DAY AVAILABILITY", entity=available_day,
+                    metadata={"message": "Successfully Update Day Weekly Availability"}
+                )
             return Response(
                 {
                     "status": True,
@@ -662,6 +688,10 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                 }, status=status.HTTP_200_OK
             )
         except Exception as e:
+            self.create_log(
+                log_status=LogStatus.FAILED, action="UPDATE DAY AVAILABILITY", entity=self.request.user.service_provider_profile,
+                metadata={"message": "Failed to Update Day Weekly Availability", "error": str(e)}
+            )
             return Response(
                 {
                     "status": False,
@@ -689,6 +719,10 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                     for day in self.weekly_day_list
                 ]
                 HelperWeeklyAvailability.objects.bulk_create(availability_objects)
+                self.create_log(
+                    log_status=LogStatus.SUCCESS, action="SET WEEKLY AVAILABILITY", entity=self.request.user.service_provider_profile,
+                    for_notify=True, metadata={"message": "Successfully Set Your Weekly Availability"}
+                )
             return Response(
                 {
                     "status": True,
@@ -696,6 +730,10 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                 }, status=status.HTTP_200_OK
             )
         except Exception as e:
+            self.create_log(
+                log_status=LogStatus.FAILED, action="SET WEEKLY AVAILABILITY", entity=self.request.user.service_provider_profile,
+                metadata={"message": "Failed to Set Your Weekly Availability", "error": str(e)}
+            )
             return Response(
                 {
                     "status": False,
@@ -780,6 +818,10 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                 )
                 excep.type = HelperSlotExceptionType.AVAILABLE if is_available is True else HelperSlotExceptionType.UNAVAILABLE
                 excep.save()
+                self.create_log(
+                    log_status=LogStatus.SUCCESS, action=f"ADD SLOT EXCEPTION: {excep.type}", entity=excep,
+                    for_notify=True, metadata={"message": f"Add New Slot Exception for {excep.type}."}
+                )
                 return Response(
                     {
                         "status": True,
@@ -787,6 +829,10 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                     }, status=status.HTTP_200_OK
                 )
         except Exception as e:
+            self.create_log(
+                log_status=LogStatus.FAILED, action="ADD SLOT EXCEPTION", entity=self.request.user.service_provider_profile,
+                metadata={"message": "Failed to Add New Slot Exception.", "error": str(e)}
+            )
             return Response(
                 {
                     "status": False,
@@ -812,7 +858,7 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                 elif date_status not in [DateStatus.AVAILABLE, DateStatus.UNAVAILABLE]:
                     raise Exception("Invalid date status.")
                 
-                HelperSpecialDate.objects.update_or_create(
+                special_date, _ = HelperSpecialDate.objects.update_or_create(
                     provider=request.user.service_provider_profile,
                     date=datetime.strptime(date, "%d-%m-%Y").date(),
                     defaults={
@@ -822,6 +868,10 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                         'date_status': date_status,
                     }
                 )
+                self.create_log(
+                    log_status=LogStatus.SUCCESS, action="SPECIAL DATE AVAILABILITY", entity=special_date,
+                    for_notify=True, metadata={"message": "Set Your Special Date Availability."}
+                )
                 return Response(
                     {
                         "status": True,
@@ -829,6 +879,10 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                     }, status=status.HTTP_200_OK
                 )
         except Exception as e:
+            self.create_log(
+                log_status=LogStatus.FAILED, action="SPECIAL DATE AVAILABILITY", entity=self.request.user.service_provider_profile,
+                metadata={"message": "Failed to Set Your Special Date Availability.", "error": str(e)}
+            )
             return Response(
                 {
                     "status": False,
@@ -845,7 +899,8 @@ class NextJobOrdersView(APIView):
             provider = request.user.hasServiceProviderProfile
             next_orders = Order.objects.filter(
                 provider=provider,
-                status__in=[OrderStatus.ACCEPT, OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]
+                status__in=[OrderStatus.ACCEPT, OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS],
+                payment_status__in=[OrderPaymentStatus.PAID]
             ).order_by('working_date')[:3]
             serializer = OrderSerializer(next_orders, many=True, context={"request": request})
             return Response(

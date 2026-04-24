@@ -6,6 +6,8 @@ import random
 import string
 
 
+# ============================================================
+# Ticket Models Section ===================
 class Ticket(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="tickets")
     user_profile_type = models.CharField(max_length=50, choices=TicketUserProfileType.choices, blank=True, null=True)
@@ -52,6 +54,15 @@ class TicketReply(models.Model):
         self.ticket.save()
 
 
+# Ticket Models Section ===================
+# ============================================================
+
+
+# ============================================================
+# Category Views Section ===================
+
+# Category Views Section ===================
+# ============================================================
 
 
 # Site Settings Model========================================

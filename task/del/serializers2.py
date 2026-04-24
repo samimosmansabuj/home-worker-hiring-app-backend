@@ -1,4 +1,4 @@
-from .models import Order, ReviewAndRating, OrderRefundRequest, OrderPaymentStatus
+from ..models import Order, ReviewAndRating, OrderRefundRequest, OrderPaymentStatus
 from rest_framework import serializers
 from find_worker_config.model_choice import OrderStatus
 from account.models import User

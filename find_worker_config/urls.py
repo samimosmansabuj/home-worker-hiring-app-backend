@@ -21,12 +21,11 @@ urlpatterns = [
     # include APP Urls File==========
     path("api/v1/", include("account.urls")),
     path("api/v1/", include("chat_notify.urls")),
-    path("api/v1/", include("job.urls")),
     path("api/v1/", include("core.urls")),
     
     # remove after complete job app-----
     path("api/v1/", include("task.urls")),
-
+    
 
     # API schema
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

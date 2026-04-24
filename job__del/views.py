@@ -13,7 +13,7 @@ import os
 from math import radians, cos, sin, asin, sqrt
 from django.db.models import Q
 from rest_framework.generics import CreateAPIView
-from .paginations import HelperPagination
+from ..core.paginations import HelperPagination
 from find_worker_config.model_choice import UserDefault, OrderStatus, PaymentTransactionType, PaymentAction, OrderPaymentStatus
 from rest_framework.decorators import action
 from django.utils import timezone
@@ -174,7 +174,9 @@ class HelperListViewset(UpdateReadOnlyModelViewSet):
 
 
 # ============================================================
-# ========Custom Offer Order Create===================
+# ========Order Views Section===================
+
+# -----------Custom Offer Order Start-------------
 class CustomerOrderCreateViews(CreateAPIView):
     serializer_class = OrderSerializerAll
     permission_classes = [IsAuthenticated]
@@ -213,9 +215,9 @@ class CustomerOrderCreateViews(CreateAPIView):
                     'message': str(e),
                 }, status=status.HTTP_400_BAD_REQUEST
             )
-    
-# ========Custom Offer Order Create===================
-# ============================================================
+
+# -----------Custom Offer Order End-------------
+
 
 class CustomerOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializerAll
@@ -732,4 +734,5 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             }, status=status.HTTP_405_METHOD_NOT_ALLOWED
         )
 
-
+# ========Order Views Section===================
+# ============================================================

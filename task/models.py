@@ -10,6 +10,8 @@ import secrets
 import string
 from rest_framework.exceptions import ValidationError
 
+# ============================================================
+# Category Models Section ===================
 class ServiceCategory(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
@@ -33,6 +35,12 @@ class ServiceSubCategory(models.Model):
     def __str__(self):
         return f"{self.title} of {self.category.title}"
 
+# Category Models Section ===================
+# ============================================================
+
+
+# ============================================================
+# Order Models Section ===================
 class Order(models.Model):
     category = models.ForeignKey(ServiceCategory, on_delete=models.SET_NULL, related_name="orders", blank=True, null=True)
     customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, related_name="orders_as_customer", blank=True, null=True)
@@ -91,6 +99,10 @@ class OrderChangesRequest(models.Model):
     changes_data = models.JSONField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+# Order Models Section ===================
+# ============================================================
+
 
 
 class ReviewAndRating(models.Model):

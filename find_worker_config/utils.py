@@ -150,19 +150,7 @@ class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
 
 
 
-# def create_log(self, log_status=None, action=None, user=None, user_type=None, entity=None, error=None, for_notify=False, metadata={}):
-#     data = {
-#         "user": user,
-#         "user_type": user_type,
-#         "action": action,
-#         "status": log_status,
-#         "entity": entity,
-#         "for_notify": for_notify,
-#         "request": self.request,
-#         "metadata": metadata
-#     }
-#     log = LogActivityModule(data)
-#     log.create()
+
 class LogActivityModule:
     def get_confirm_data(self, field, field_name):
         if not field:

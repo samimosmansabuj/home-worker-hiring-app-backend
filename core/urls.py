@@ -1,6 +1,6 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path, include
-from .views import TicketViewSet, AdminWalletViews, SignUpSliderViewset, CustomerScreenSlideViewset
+from .views import TicketViewSet, AdminWalletViews, SignUpSliderViewset, CustomerScreenSlideViewset, HelperListViewset
 
 router = DefaultRouter()
 router.register(r"tickets", TicketViewSet, basename="ticket")
@@ -8,6 +8,10 @@ router.register(r"tickets", TicketViewSet, basename="ticket")
 site_router = DefaultRouter()
 site_router.register(r"signup-slide", SignUpSliderViewset, basename="site-signup-slide")
 site_router.register(r"customer-screen", CustomerScreenSlideViewset, basename="customer-screen")
+
+# ============================================================================================================
+site_router.register(r"helper", HelperListViewset, basename="helper")
+# ============================================================================================================
 
 urlpatterns = [
     # Ticket========================================
