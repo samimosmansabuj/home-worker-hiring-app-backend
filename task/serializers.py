@@ -309,8 +309,8 @@ class ReviewAndRatingSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = ReviewAndRating
-        fields = ["id", "order", "customer", "provider", "send_by", "rating", "review", "is_approved", "created", "updated_at"]
-        read_only_fields = ["id", "order", "customer", "provider", "send_by", "is_approved", "created", "updated_at"]
+        fields = ["id", "order", "customer", "provider", "send_by", "rating", "review", "is_approved", "created_at", "updated_at"]
+        read_only_fields = ["id", "order", "customer", "provider", "send_by", "is_approved", "created_at", "updated_at"]
     
     def create(self, validated_data):
         with transaction.atomic():
