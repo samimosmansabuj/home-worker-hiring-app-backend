@@ -4,6 +4,7 @@ from .serializers import (
 )
 from django.db import transaction
 from rest_framework.views import APIView
+from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
@@ -18,6 +19,7 @@ from .utils import  get_otp_object
 from django.shortcuts import get_object_or_404
 from account.models import User
 from django.db.models import Q
+from core.services.log_engine import CreateLog
 
 
 
@@ -297,48 +299,43 @@ class SignUpOTPVerifyView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
 # -------------------------------------------------
-class SignUpViews(APIView):
-    def create_log(self, user):
-        data = {
-            "user": user,
-            "action": "New Registration",
-            "entity": user,
-            "request": self.request,
-            "metadata": {"registration_method": "User Registration & Verify"}
-        }
-        log = LogActivityModule(data)
-        log.create()
+class SignUpViews(GenericAPIView):
+    serializer_class = SignupSerializer
     
     def post(self, request, *args, **kwargs):
-        try:
-            with transaction.atomic():
-                serializer = SignupSerializer(data=request.data)
-                serializer.is_valid(raise_exception=True)
-                user = serializer.save()
-                email = serializer.send_code()
-                self.create_log(user)
-                return Response(
-                    {
-                        "status": True,
-                        "message": "OTP send to your email address.",
-                        "data": email
-                    }, status=status.HTTP_200_OK
-                )
-        except ValidationError:
-            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+        # try:
+        with transaction.atomic():
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            user = serializer.save()
+            email = serializer.send_code()
+
+            CreateLog(
+                request=request, log_status=LogStatus.SUCCESS, action="New Registration", user=user,
+                for_notify=True, metadata={"message": "User Registration & Verify"}
+            )
             return Response(
                 {
-                    'status': False,
-                    'message': error,
-                },status=status.HTTP_400_BAD_REQUEST
+                    "status": True,
+                    "message": "OTP send to your email address.",
+                    "data": email
+                }, status=status.HTTP_200_OK
             )
-        except Exception as e:
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                },status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        # except ValidationError:
+        #     error = {key: str(value[0]) for key, value in serializer.errors.items()}
+        #     return Response(
+        #         {
+        #             'status': False,
+        #             'message': error,
+        #         },status=status.HTTP_400_BAD_REQUEST
+        #     )
+        # except Exception as e:
+        #     return Response(
+        #         {
+        #             'status': False,
+        #             'message': str(e),
+        #         },status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        #     )
 
 class UserSignUpOTPVerifyView(APIView):
     def create_log(self, user, log_status):
@@ -659,8 +656,9 @@ class UpdateTokenRefreshView(TokenRefreshView):
             )
 
 
-class ChangePasswordView(APIView):
+class ChangePasswordView(GenericAPIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = ChangePasswordSerializer
 
     def create_log(self, log_status, error=None):
         data = {
@@ -677,7 +675,7 @@ class ChangePasswordView(APIView):
     def post(self, request):
         try:
             with transaction.atomic():
-                serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
+                serializer = self.get_serializer(data=request.data, context={"request": request})
                 serializer.is_valid(raise_exception=True)
                 serializer.set_password()
                 self.create_log(LogStatus.SUCCESS)
@@ -708,7 +706,9 @@ class ChangePasswordView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-class PasswordResetRequestView(APIView):
+class PasswordResetRequestView(GenericAPIView):
+    serializer_class = PasswordResetRequestSerializer
+
     def create_log(self, log_status, user=None, entity=None, error=None, for_notify=False):
         data = {
             "user": user,
@@ -724,7 +724,7 @@ class PasswordResetRequestView(APIView):
     
     def post(self, request):
         try:
-            serializer = PasswordResetRequestSerializer(data=request.data)
+            serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             otp_obect = serializer.send_code()
             self.create_log(LogStatus.SUCCESS, user=serializer.get_user(), entity=otp_obect, for_notify=True)
@@ -756,7 +756,9 @@ class PasswordResetRequestView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-class PasswordResetConfirmView(APIView):
+class PasswordResetConfirmView(GenericAPIView):
+    serializer_class = PasswordResetConfirmSerializer
+
     def create_log(self, log_status, user=None, entity=None, error=None, for_notify=False):
         data = {
             "user": user,
@@ -772,7 +774,7 @@ class PasswordResetConfirmView(APIView):
     
     def post(self, request):
         try:
-            serializer = PasswordResetConfirmSerializer(data=request.data)
+            serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             otp = get_otp_object(serializer.validated_data, OTPType.RESET_PASSWORD)
             serializer.set_new_password(otp.user)

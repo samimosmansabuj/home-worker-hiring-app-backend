@@ -4,7 +4,7 @@ from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from task.models import ReviewAndRating
-from .models import HelperWallet, HelperWeeklyAvailability, SavedHelper, User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod
+from .models import HelperWallet, HelperWeeklyAvailability, SavedHelper, User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod, User
 from .utils import generate_otp
 from find_worker_config.model_choice import OTPType, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, OrderStatus, UserDefault
 from django.core.exceptions import ObjectDoesNotExist
@@ -25,7 +25,7 @@ from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.files.base import ContentFile
 
-User = get_user_model()
+# User = get_user_model()
 
 
 
@@ -195,9 +195,9 @@ class SignupSerializer(serializers.ModelSerializer):
             user = User(**validated_data)
             user.set_password(password)
             user.save()
+            self.user = user
             self.create_address(user, address_data)
             self.create_referral_object(user, referral_code)
-            self.user = user
             return user
     
     def send_code(self):

@@ -69,7 +69,7 @@ class Attachment(models.Model):
 
 class Notification(models.Model):
     received = models.ForeignKey(User, on_delete=models.CASCADE)
-    profile = models.CharField(max_length=20, choices=UserDefault.choices)
+    profile = models.CharField(max_length=20, choices=UserDefault.choices, blank=True, null=True)
     action = models.CharField(max_length=255)
     metadata = models.JSONField(default=dict, blank=True, null=True)
     is_read = models.BooleanField(default=False)
