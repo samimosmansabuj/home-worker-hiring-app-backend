@@ -15,6 +15,7 @@ from rest_framework.permissions import IsAdminUser
 from .paginations import HelperPagination
 from account.models import User, Address, ServiceProviderProfile
 from math import radians, cos, sin, asin, sqrt
+from .services.log_engine import CreateLog
 
 
 # ----------------------------------------------------------
@@ -63,21 +64,6 @@ class TicketViewSet(UpdateModelViewSet):
             )
             return instance
     
-    # -------------------
-    # Log Create & Notify
-    def create_log(self, action, entity=None, for_notify=False, user=None, metadata={}):
-        data = {
-            "user": user or self.request.user,
-            "action": action,
-            "entity": entity,
-            "request": self.request,
-            "for_notify": for_notify,
-            "metadata": metadata,
-        }
-        log = LogActivityModule(data)
-        log.create()
-    # -------------------
-
     def check_user(self, ticket: object):
         if not (self.request.user.role == UserRole.ADMIN or ticket.user == self.request.user):
             return Response({"detail": "Not allowed"}, status=status.HTTP_403_FORBIDDEN)
