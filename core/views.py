@@ -202,8 +202,8 @@ class CustomerScreenSlideViewset(UpdateModelViewSet):
     permission_classes = [IsAdminWritePermissionOnly]
 # -------------------
 
-# ============================================================
-# Buyer/Helper List for Customer/Client===================
+# ----------------------------------------------------------
+# Buyer/Helper List for Customer/Client
 class HelperListViewset(UpdateReadOnlyModelViewSet):
     serializer_class = HelperSerializer
     permission_classes = [IsAuthenticated]
@@ -351,6 +351,5 @@ class HelperListViewset(UpdateReadOnlyModelViewSet):
         serializer = self.get_serializer(instance)
         return self.perform_retrieve(serializer)
 
-# Buyer/Helper List for Customer/Client===================
-# ============================================================
+# ----------------------------------------------------------
 

@@ -197,8 +197,9 @@ class HelperSlotException(models.Model):
     start_time = models.TimeField()
     end_time = models.TimeField()
     reason = models.CharField(max_length=255, blank=True, null=True)
-    order = models.ForeignKey("task.Order", on_delete=models.SET_NULL, blank=True, null=True)
+    order = models.ForeignKey("task.Order", on_delete=models.SET_NULL, blank=True, null=True, related_name="slot_exceptions")
     created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
 
     def clean(self):
         if self.start_time >= self.end_time:

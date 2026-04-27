@@ -20,7 +20,7 @@ class SlotStatusEngine:
     def get_slot_exceptions(self, provider, date_obj):
         # return provider.slot_exceptions.filter(date=date_obj)
         return provider.slot_exceptions.filter(
-            date=date_obj
+            date=date_obj, is_active=True
         ).annotate(
             priority=Case(
                 When(type="BOOKED", then=0),

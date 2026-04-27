@@ -97,6 +97,7 @@ class OrderStatus(models.TextChoices):
     COMPLETED = "COMPLETED"
     PARTIAL_COMPLETE = "PARTIAL_COMPLETE"
     CANCELLED = "CANCELLED"
+    CANCELLATION_REQUEST = "CANCELLATION_REQUEST"
     REFUND_REQUEST = "REFUND_REQUEST"
     REFUND = "REFUND"
 
@@ -119,6 +120,7 @@ class ChangesRequestType(models.TextChoices):
     AMOUNT = "AMOUNT"
     COUNTER = "COUNTER"
     SET_HOUR = "SET_HOUR"
+    CANCEL = "CANCEL"
 
 class ReviewRatingChoice(models.IntegerChoices):
     ONE = 1

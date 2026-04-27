@@ -100,6 +100,8 @@ class OrderChangesRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+
+
 # Order Models Section ===================
 # ============================================================
 
@@ -122,6 +124,7 @@ class OrderRefundRequest(models.Model):
     customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, related_name="refund_requests", blank=True, null=True)
     reason = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=RefundStatus.choices, default=RefundStatus.PENDING)
+    order_amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     refund_amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     admin_note = models.TextField(blank=True, null=True)
     processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="processed_refunds")
