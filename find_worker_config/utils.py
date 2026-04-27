@@ -10,6 +10,9 @@ from account.models import ActivityLog
 from chat_notify.models import Notification
 from ipware import get_client_ip
 from django.db import transaction
+from chat_notify.utils import push_notification
+from chat_notify.models import Notification
+
 
 class UpdateModelViewSet(ModelViewSet):
     delete_message = "Object Successfully Deleted!"
@@ -112,7 +115,6 @@ class UpdateModelViewSet(ModelViewSet):
                     'message': self.delete_message,
                 }, status=status.HTTP_200_OK
             )
-    
 
 class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
     def retrieve(self, request, *args, **kwargs):
@@ -184,15 +186,6 @@ class LogActivityModule:
         if xff:
             return xff.split(",")[0]
         return request.META.get("REMOTE_ADDR")
-    
-    # def get_client_ip(self, request):
-    #     x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-    #     if x_forwarded_for:
-    #         ip = x_forwarded_for.split(",")[0].strip()
-    #     else:
-    #         ip = request.META.get("REMOTE_ADDR")
-    #     print("ip: ", ip)
-    #     return ip
 
     def get_data(self):
         dict_data = {
@@ -219,6 +212,26 @@ class LogActivityModule:
         except Exception as e:
             print("error: ", e)
             raise Exception("Someting wrong for create log!")
+
+    def send_notification(self):
+        notification = Notification.objects.create(
+            received=instance.user,
+            profile=instance.user_type,
+            action=instance.action,
+            entity_type=instance.entity_type,
+            entity_id=instance.entity_id,
+            metadata=instance.metadata,
+        )
+        push_notification(
+            user_id=notification.received.id,
+            data={
+                "notify_text": notification.notify_text,
+                "entity_type": "order",
+                "entity": notification.entity_id,
+                "is_read": notification.is_read
+            }
+        )
+        return notification
 
 class PaymentTransactionModule:
     def __init__(self, user, amount, reference_object, type, action, payment_information: dict={}, reference=None, currency=None, service_charge: dict={}):

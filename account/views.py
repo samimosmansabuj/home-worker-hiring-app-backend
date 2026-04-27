@@ -6,7 +6,6 @@ from rest_framework.generics import RetrieveUpdateDestroyAPIView, CreateAPIView,
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
-from job__del.serializers import HelperSerializer
 from .models import Address, CustomerProfile, HelperSlotException, HelperSpecialDate, HelperWallet, HelperWeeklyAvailability, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher, SavedHelper
 from .serializers import (
     HelperWeeklyAvailabilitySerializer, ProviderEarningsViewSerializer, ReviewAndRatingProfileSerializer, UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer, SaveHelperProfileSerializer
@@ -18,6 +17,7 @@ from rest_framework.viewsets import GenericViewSet
 from find_worker_config.model_choice import (
     DateStatus, OrderStatus, OrderPaymentStatus , UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, DayStatus, HelperSlotExceptionType, PaymentAction, LogStatus
 )
+from core.serializers import HelperSerializer
 from .models import ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet, LogActivityModule

@@ -69,8 +69,7 @@ class CustomerOrderCreateViews(CreateAPIView):
             return datetime.strptime(time_str, "%I:%M %p").time()
         except ValueError:
             raise ValidationError("Invalid time format. Expected format like '09:00 AM'")
-
-
+    
     def create(self, request, *args, **kwargs):
         try:
             serializer = self.get_serializer(data=request.data)
@@ -992,7 +991,7 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             CreateLog(
                 request=request, log_status=LogStatus.FAILED, action="SEND FEEDBACK", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Failed to Send Feedback with this Order."}
+                entity=order, for_notify=False, metadata={"message": "Failed to Send Feedback with this Order."}
             )
             return Response(
                 {
@@ -1003,7 +1002,7 @@ class ProviderOrderViewSet(UpdateModelViewSet):
         except Exception as e:
             CreateLog(
                 request=request, log_status=LogStatus.FAILED, action="SEND FEEDBACK", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Failed to Send Feedback with this Order.", "error": str(e)}
+                entity=order, for_notify=False, metadata={"message": "Failed to Send Feedback with this Order.", "error": str(e)}
             )
             return Response(
                 {
@@ -1050,6 +1049,10 @@ class ProviderOrderViewSet(UpdateModelViewSet):
 
 # ========Order Views Section===================
 # ============================================================
+
+
+
+
 
 
 
