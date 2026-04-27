@@ -383,32 +383,87 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                     }
                 )
                 response_message = "Order Cancellation Request Send!"
-                # order.status = OrderStatus.REFUND_REQUEST
-                # order.payment_status = OrderPaymentStatus.REFUND
-                # OrderRefundRequest.objects.create(
-                #     order=order,
-                #     customer=order.customer,
-                #     reason=data.pop("message", None),
-                #     refund_amount=order.amount
-                # )
-                # response_message = "Order Cancelled & Refund Processing!"
             else:
                 return Response(
                     {
                         "status": False,
-                        "message": f"Order already {order.payment_status}"
+                        "message": f"Order already {order.status}"
                     }, status=status.HTTP_400_BAD_REQUEST
                 )
             order.save()
 
             CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="CANCEL ORDER", user=self.request.user, user_type=UserDefault.CUSTOMER,
+                request=request, log_status=LogStatus.SUCCESS, action="ORDER CANCELLATION REQUEST", user=self.request.user, user_type=UserDefault.CUSTOMER,
                 entity=order, for_notify=True, metadata={"message": "Send Cancel Request for Cancel This Order."}
             )
             CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="CANCEL ORDER", user=order.provider.user, user_type=UserDefault.PROVIDER,
+                request=request, log_status=LogStatus.SUCCESS, action="ORDER CANCELLATION REQUEST", user=order.provider.user, user_type=UserDefault.PROVIDER,
                 entity=order, for_notify=True, metadata={"message": "Send Cancel Request for Cancel This Order."}
             )
+            return Response(
+                {
+                    "status": True,
+                    "message": response_message
+                }, status=status.HTTP_200_OK
+            )
+    
+    @action(detail=True, methods=["post"], url_path="cancel-accept")
+    def cancellation_accept(self, request, *args, **kwargs):
+        order = self.get_object()
+        data = request.data
+
+        # post data----
+        request_id = data.get("changes_request_id", None)
+        action = data.get("action", None)
+
+        # data validation----
+        if request_id is None:
+            raise ValueError("Changes Request must be needed!")
+        elif action is None:
+            raise ValueError("Changes action must be needed!")
+        elif not OrderChangesRequest.objects.filter(pk=request_id).exists():
+            raise ValueError("Wrong Request ID.")
+        
+        # get refund amount----
+        def get_refund_amount(order):
+            return order.amount
+        
+        # user validation----
+        changes_request = OrderChangesRequest.objects.get(pk=request_id)
+        if changes_request.request_by == UserDefault.CUSTOMER:
+            raise Exception("You can't perform this action")
+        
+        # use logic---
+        with transaction.atomic():
+            if action.upper() == OrderChangesRequestStatus.ACCEPT:
+                changes_request.status = OrderChangesRequestStatus.ACCEPT
+                changes_request.save()
+                
+                Order.objects.filter(pk=order.id).update(
+                    status=OrderStatus.REFUND_REQUEST,
+                    payment_status=OrderPaymentStatus.REFUND
+                )
+                OrderRefundRequest.objects.create(
+                    order=order,
+                    customer=order.customer,
+                    reason=changes_request.changes_data.get("message", None),
+                    order_amount=order.amount,
+                    refund_amount=get_refund_amount(order)
+                )
+                HelperSlotException.objects.filter(order=order).update(is_active=False)
+                response_message = "Order Cancelled Confirm & Refund Processing!"
+                CreateLog(
+                    request=request, log_status=LogStatus.SUCCESS, action="CANCELLATION CONFIRM", user=order.provider.user, user_type=UserDefault.PROVIDER,
+                    entity=order, for_notify=True, metadata={"message": "Order Cencellation Request Confirm By Customer."}
+                )
+            elif action.upper() in [OrderChangesRequestStatus.DECLINED, "REJECT"]:
+                changes_request.status = OrderChangesRequestStatus.DECLINED
+                changes_request.save()
+                response_message = "Order Cancellation Declined!"
+                CreateLog(
+                    request=request, log_status=LogStatus.SUCCESS, action="CANCELLATION REJECTED", user=order.provider.user, user_type=UserDefault.PROVIDER,
+                    entity=order, for_notify=True, metadata={"message": "Order Cencellation Request Rejected By Customer."}
+                )
             return Response(
                 {
                     "status": True,
@@ -750,31 +805,40 @@ class ProviderOrderViewSet(UpdateModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="cancel-accept")
     def cancellation_accept(self, request, *args, **kwargs):
-        with transaction.atomic():
-            order = self.get_object()
-            data = request.data
-            request_id = data.get("changes_request_id", None)
-            action = data.get("action", None)
-            if request_id is None:
-                return ValueError("Changes Request must be needed!")
-            elif action is None:
-                return ValueError("Changes action must be needed!")
-            elif not OrderChangesRequest.objects.filter(pk=request_id).exists():
-                return ValueError("Wrong Request ID.")
-            
-            def get_refund_amount(order):
-                return order.amount
+        order = self.get_object()
+        data = request.data
 
-            changes_request = OrderChangesRequest.objects.get(pk=request_id)
-            if changes_request.request_by == UserDefault.PROVIDER:
-                return Exception("You can't perform this action")
-            
+        # post data----
+        request_id = data.get("changes_request_id", None)
+        action = data.get("action", None)
+
+        # data validation----
+        if request_id is None:
+            raise ValueError("Changes Request must be needed!")
+        elif action is None:
+            raise ValueError("Changes action must be needed!")
+        elif not OrderChangesRequest.objects.filter(pk=request_id).exists():
+            raise ValueError("Wrong Request ID.")
+        
+        # get refund amount----
+        def get_refund_amount(order):
+            return order.amount
+        
+        # user validation----
+        changes_request = OrderChangesRequest.objects.get(pk=request_id)
+        if changes_request.request_by == UserDefault.PROVIDER:
+            raise Exception("You can't perform this action")
+        
+        # use logic---
+        with transaction.atomic():
             if action.upper() == OrderChangesRequestStatus.ACCEPT:
                 changes_request.status = OrderChangesRequestStatus.ACCEPT
                 changes_request.save()
 
-                order.status = OrderStatus.REFUND_REQUEST
-                order.payment_status = OrderPaymentStatus.REFUND
+                Order.objects.filter(pk=order.id).update(
+                    status=OrderStatus.REFUND_REQUEST,
+                    payment_status=OrderPaymentStatus.REFUND
+                )
                 OrderRefundRequest.objects.create(
                     order=order,
                     customer=order.customer,
@@ -784,7 +848,6 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 )
                 HelperSlotException.objects.filter(order=order).update(is_active=False)
                 response_message = "Order Cancelled Confirm & Refund Processing!"
-
                 CreateLog(
                     request=request, log_status=LogStatus.SUCCESS, action="CANCELLATION CONFIRM", user=order.customer.user, user_type=UserDefault.CUSTOMER,
                     entity=order, for_notify=True, metadata={"message": "Order Cencellation Request Confirm By Provider."}
