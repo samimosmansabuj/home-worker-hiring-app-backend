@@ -434,28 +434,6 @@ class ProviderVerification(models.Model):
 
 
 
-# Logs Model==============================================
-class ActivityLog(models.Model):
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
-    user_type = models.CharField(max_length=30, choices=UserDefault.choices, blank=True, null=True)
-    action = models.CharField(max_length=255)
-    status = models.CharField(max_length=20, choices=LogStatus.choices, default=LogStatus.SUCCESS)
-
-    entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
-    entity_id = models.PositiveBigIntegerField(blank=True, null=True)
-    service = GenericForeignKey('entity_type', 'entity_id')
-    
-    metadata = models.JSONField(default=dict)
-    ip_address = models.GenericIPAddressField()
-    created_at = models.DateTimeField(auto_now_add=True)
-    need_notify = models.BooleanField(default=False)
-
-    def __str__(self):
-        # return f"{self.user.username} {self.action} "
-        username = self.user.username if self.user else None
-        return f"{self.created_at} - {username} - {self.action} | {self.status}"
-
-
 # Referral & Vouchar Model========================================
 class Referral(models.Model):
     referrer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='referrer')
@@ -492,4 +470,27 @@ class Voucher(models.Model):
     def save(self, *args, **kwargs):
         if not self.code: self.code = self.generate_redeem_code()
         return super().save(*args, **kwargs)
+
+
+
+# Logs Model==============================================
+class ActivityLog(models.Model):
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    user_type = models.CharField(max_length=30, choices=UserDefault.choices, blank=True, null=True)
+    action = models.CharField(max_length=255)
+    message = models.CharField(max_length=255, blank=True, null=True)
+    status = models.CharField(max_length=20, choices=LogStatus.choices, default=LogStatus.SUCCESS)
+    
+    entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
+    entity_id = models.PositiveBigIntegerField(blank=True, null=True)
+    service = GenericForeignKey('entity_type', 'entity_id')
+    
+    ip_address = models.GenericIPAddressField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    need_notify = models.BooleanField(default=False)
+
+    def __str__(self):
+        # return f"{self.user.username} {self.action} "
+        username = self.user.username if self.user else None
+        return f"{self.created_at} - {username} - {self.action} | {self.status}"
 

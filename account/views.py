@@ -20,7 +20,7 @@ from find_worker_config.model_choice import (
 from core.serializers import HelperSerializer
 from .models import ProviderVerification
 from .utils import generate_otp, get_otp_object
-from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet, LogActivityModule
+from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
 from core.services.log_engine import CreateLog
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
@@ -37,6 +37,8 @@ from task.serializers import PaymentTransaction, PaymentTransactionDetailSeriali
 
 from rest_framework.decorators import action
 User = get_user_model()
+
+from core.services.log_engine import LogActivityEngine, handle_log_engine
 
 
 
@@ -57,17 +59,18 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = CurrentUserInfoSerializer
 
-    def create_log(self, log_status, errro=None):
-        data = {
-            "user": self.request.user,
+    def handle_log(self, status, message, user_type=None, entity=None, notify=False):
+        log_data = {
             "action": "Profile Update",
-            "status": log_status,
-            "entity": self.request.user,
-            "request": self.request,
-            "metadata": {"update_method": "Profile Update", "error": errro}
+            "status": status,
+            "message": message,
+            "entity": entity,
+            "request": self.request
         }
-        log = LogActivityModule(data)
-        log.create()
+        log_engine = LogActivityEngine(log_data)
+        log_engine.create_log(self.request.user or None)
+        if notify:
+            log_engine.send_notification(UserRole.USER, receiver=self.request.user or None)
 
     def get_object(self):
         user = self.request.user
@@ -118,7 +121,9 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
                 if getattr(instance, '_prefetched_objects_cache', None):
                     instance._prefetched_objects_cache = {}
                 
-                self.create_log(LogStatus.SUCCESS)
+                self.handle_log(
+                    LogStatus.SUCCESS, "User Profile Update"
+                )
                 return Response(
                     {
                         "status": True,
@@ -126,7 +131,9 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
                     }
                 )
         except ValidationError as e:
-            self.create_log(LogStatus.FAILED)
+            self.handle_log(
+                LogStatus.FAILED, "Failed to Update Profile"
+            )
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
             return Response(
                 {
@@ -135,7 +142,9 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            self.create_log(LogStatus.FAILED, str(e))
+            self.handle_log(
+                LogStatus.FAILED, str(e)
+            )
             return Response(
                 {
                     "status": False,
@@ -149,17 +158,18 @@ class UserAddressViews(UpdateModelViewSet):
     serializer_class = UserAddressSerializer
     permission_classes = [IsAuthenticated]
 
-    def create_log(self, action, log_status, entity=None, errro=None):
-        data = {
-            "user": self.request.user,
+    def handle_log(self, action, status, message, entity=None, user_type=None, notify=False):
+        log_data = {
             "action": action,
-            "status": log_status,
+            "status": status,
+            "message": message,
             "entity": entity,
-            "request": self.request,
-            "metadata": {"update_method": action, "error": errro}
+            "request": self.request
         }
-        log = LogActivityModule(data)
-        log.create()
+        log_engine = LogActivityEngine(log_data)
+        log_engine.create_log(self.request.user or None)
+        if notify:
+            log_engine.send_notification(UserRole.USER, receiver=self.request.user or None)
 
     def get_user(self):
         return self.request.user
@@ -192,12 +202,16 @@ class UserAddressViews(UpdateModelViewSet):
 
     def perform_create(self, serializer):
         address_serializer = serializer.save(is_default=True)
-        self.create_log("Add new address", LogStatus.SUCCESS, address_serializer)
+        self.handle_log(
+            "Add New Address", LogStatus.SUCCESS, "Add new address", entity=address_serializer
+        )
         return address_serializer
     
     def perform_update(self, serializer):
         address_serializer = serializer.save(is_default=True)
-        self.create_log("Update address", LogStatus.SUCCESS, address_serializer)
+        self.handle_log(
+            "Update Address", LogStatus.SUCCESS, "Update Address", entity=address_serializer
+        )
         return address_serializer
 
     def perform_retrieve(self, serializer):
@@ -215,7 +229,9 @@ class UserAddressViews(UpdateModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             with transaction.atomic():
-                self.create_log("Delete address", LogStatus.SUCCESS)
+                self.handle_log(
+                    "Delete Address", LogStatus.SUCCESS, "Delete Address"
+                )
                 super().destroy(request, *args, **kwargs)
                 return Response(
                     {
@@ -224,7 +240,9 @@ class UserAddressViews(UpdateModelViewSet):
                     }, status=status.HTTP_200_OK
                 )
         except Exception as e:
-            self.create_log("Delete address", LogStatus.FAILED)
+            self.handle_log(
+                "Delete Address", LogStatus.FAILED, "Failed to Delete Address"
+            )
             return Response(
                 {
                     'status': False,
@@ -334,23 +352,23 @@ class ReviewAndRatingProfileViewSet(GenericViewSet):
 
 # ===============================================================================
 # Helper/Provider User Related API Views Start================================
+
 class CreateUserHelperView(CreateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = CurrentUserHelperSerializer
 
-    def create_log(self, log_status, entity=None, for_notify=False, metadata={}):
-        data = {
-            "user": self.request.user,
-            "user_type": UserDefault.PROVIDER,
-            "action": "Helper Profile Created",
-            "status": log_status,
+    def handle_log(self, status, message, entity=None, user_type=None, notify=False):
+        log_data = {
+            "action": "Helper Created",
+            "status": status,
+            "message": message,
             "entity": entity,
-            "for_notify": for_notify,
-            "request": self.request,
-            "metadata": metadata
+            "request": self.request
         }
-        log = LogActivityModule(data)
-        log.create()
+        log_engine = LogActivityEngine(log_data)
+        log_engine.create_log(self.request.user or None, user_type=user_type)
+        if notify:
+            log_engine.send_notification(UserRole.USER, receiver=self.request.user or None, profile=user_type)
 
     def get_object(self):
         user = self.request.user
@@ -369,7 +387,10 @@ class CreateUserHelperView(CreateAPIView):
                 serializer = self.get_serializer(data=request.data)
                 serializer.is_valid(raise_exception=True)
                 serializer.save(user=self.get_object())
-                self.create_log(log_status=LogStatus.SUCCESS, entity=serializer.instance, for_notify=True, metadata={"message": "Create Helper Profile"})
+
+                self.handle_log(
+                    LogStatus.SUCCESS, "Create Helper Profile", entity=serializer.instance, user_type=UserDefault.PROVIDER, notify=True
+                )
                 return Response(
                     {
                         "status": True,
@@ -378,7 +399,9 @@ class CreateUserHelperView(CreateAPIView):
                 )
         except ValidationError as e:
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            self.create_log(log_status=LogStatus.FAILED, metadata={"message": "Failed to Create Helper Profile"})
+            self.handle_log(
+                LogStatus.FAILED, "Create Helper Profile"
+            )
             return Response(
                 {
                     "status": False,
@@ -386,7 +409,9 @@ class CreateUserHelperView(CreateAPIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            self.create_log(log_status=LogStatus.FAILED, metadata={"message": "Failed to Create Helper Profile", "error": str(e)})
+            self.handle_log(
+                LogStatus.FAILED, str(e)
+            )
             return Response(
                 {
                     "status": False,
@@ -398,19 +423,16 @@ class CurrentUserHelperView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = CurrentUserHelperSerializer
 
-    def create_log(self, log_status, entity=None, for_notify=False, metadata={}):
-        data = {
-            "user": self.request.user,
-            "user_type": UserDefault.PROVIDER,
-            "action": "Update Helper Profile",
-            "status": log_status,
+    def handle_log(self, status, message, entity=None, user_type=None):
+        log_data = {
+            "action": "Helper Updated",
+            "status": status,
+            "message": message,
             "entity": entity,
-            "for_notify": for_notify,
-            "request": self.request,
-            "metadata": metadata
+            "request": self.request
         }
-        log = LogActivityModule(data)
-        log.create()
+        log_engine = LogActivityEngine(log_data)
+        log_engine.create_log(self.request.user or None, user_type=user_type)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -445,7 +467,9 @@ class CurrentUserHelperView(RetrieveUpdateDestroyAPIView):
                 if getattr(instance, '_prefetched_objects_cache', None):
                     instance._prefetched_objects_cache = {}
                 
-                self.create_log(log_status=LogStatus.SUCCESS, entity=serializer.instance, metadata={"message": "Update Helper Profile"})
+                self.handle_log(
+                    LogStatus.SUCCESS, "Update Helper Profile", entity=instance
+                )
                 return Response(
                     {
                         "status": True,
@@ -454,7 +478,9 @@ class CurrentUserHelperView(RetrieveUpdateDestroyAPIView):
                 )
         except ValidationError as e:
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            self.create_log(log_status=LogStatus.FAILED, metadata={"message": "Failed to Update Helper Profile", "error": str(e)})
+            self.handle_log(
+                LogStatus.FAILED, "Failed to Update Helper Profile"
+            )
             return Response(
                 {
                     "status": False,
@@ -462,7 +488,9 @@ class CurrentUserHelperView(RetrieveUpdateDestroyAPIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            self.create_log(log_status=LogStatus.FAILED, metadata={"message": "Failed to Update Helper Profile", "error": str(e)})
+            self.handle_log(
+                LogStatus.FAILED, str(e)
+            )
             return Response(
                 {
                     "status": False,
@@ -539,7 +567,12 @@ class ProviderVerificationViews(APIView):
                 verification.is_verified = result.get('verified', False)
                 verification.status = DocumentStatus.APPROVED if result.get('verified', False) else result.get("status", DocumentStatus.FAILED)
                 verification.save(update_fields=["is_verified", "status"])
-                self.create_log(log_status=LogStatus.SUCCESS, entity=verification, for_notify=True, metadata={"message": "Provider Document Verification"})
+
+                handle_log_engine(
+                    request=request, action="Provider Verification", status=LogStatus.SUCCESS, message="Provider Document Verification Complete", entity=verification,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER, notify=True, role=UserRole.USER, send_to=self.request.user,
+                    send_to_type=UserDefault.PROVIDER
+                )
                 return Response(
                     {
                         "status": True,
@@ -548,7 +581,10 @@ class ProviderVerificationViews(APIView):
                     status=status.HTTP_200_OK
                 )
         except Exception as e:
-            self.create_log(log_status=LogStatus.FAILED, metadata={"message": "Failed to Provider Document Verification", "error": str(e)})
+            handle_log_engine(
+                request=request, action="Provider Verification", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
+            )
             return Response(
                 {
                     "status": False,
@@ -575,9 +611,10 @@ class ProviderAddressUpdateView(APIView):
                 raise Exception("Address not found with this id for this user.")
             provider.office_location = address
             provider.save(update_fields=["office_location"])
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="OFFICE LOCATION UPDATE", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=address, for_notify=False, metadata={"message": "Update Your Office Location"}
+
+            handle_log_engine(
+                request=request, action="OFFICE LOCATION UPDATE", status=LogStatus.SUCCESS, message="Update Your Office Location", entity=address,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
@@ -586,9 +623,9 @@ class ProviderAddressUpdateView(APIView):
                 }, status=status.HTTP_200_OK
             )
         except Exception as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="OFFICE LOCATION UPDATE", user=self.request.user, user_type=UserDefault.PROVIDER,
-                for_notify=False, metadata={"message": "Failed to Update Your Office Location"}
+            handle_log_engine(
+                request=request, action="OFFICE LOCATION UPDATE", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
@@ -631,21 +668,6 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
             }, status=status.HTTP_200_OK
         )
     
-    def create_log(self, log_status=None, action=None, entity=None, for_notify=False, error=None, metadata={}):
-        data = {
-            "status": log_status,
-            "action": action,
-            "user": self.request.user,
-            "user_type": UserDefault.PROVIDER,
-            "entity": entity,
-            "for_notify": for_notify,
-            "metadata": metadata,
-            "request": self.request
-        }
-        log = LogActivityModule(data)
-        log.create()
-
-
     def check_for_set_weekly_availability(self, available_days, start_time, end_time, day_status=None):
         if type(available_days) is str:
             available_days = [available_days]
@@ -677,9 +699,10 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                 available_day.end_time = self.convert_to_24h(end_time)
                 available_day.slot_duration_minutes = slot_duration_minutes
                 available_day.save()
-                self.create_log(
-                    log_status=LogStatus.SUCCESS, action="UPDATE DAY AVAILABILITY", entity=available_day,
-                    metadata={"message": "Successfully Update Day Weekly Availability"}
+                
+                handle_log_engine(
+                    request=request, action="UPDATE DAY AVAILABILITY", status=LogStatus.SUCCESS, message="Successfully Update Day Weekly Availability", entity=available_day,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
                 )
             return Response(
                 {
@@ -688,9 +711,9 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                 }, status=status.HTTP_200_OK
             )
         except Exception as e:
-            self.create_log(
-                log_status=LogStatus.FAILED, action="UPDATE DAY AVAILABILITY", entity=self.request.user.service_provider_profile,
-                metadata={"message": "Failed to Update Day Weekly Availability", "error": str(e)}
+            handle_log_engine(
+                request=request, action="UPDATE DAY AVAILABILITY", status=LogStatus.FAILED, message=str(e), entity=self.request.user.service_provider_profile,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
@@ -719,9 +742,12 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                     for day in self.weekly_day_list
                 ]
                 HelperWeeklyAvailability.objects.bulk_create(availability_objects)
-                self.create_log(
-                    log_status=LogStatus.SUCCESS, action="SET WEEKLY AVAILABILITY", entity=self.request.user.service_provider_profile,
-                    for_notify=True, metadata={"message": "Successfully Set Your Weekly Availability"}
+
+
+                handle_log_engine(
+                    request=request, action="SET WEEKLY AVAILABILITY", status=LogStatus.SUCCESS, message="Successfully Set Your Weekly Availability", entity=self.request.user.service_provider_profile,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True, role=UserRole.USER, send_to=self.request.user, send_to_type=UserDefault.PROVIDER
                 )
             return Response(
                 {
@@ -730,9 +756,9 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                 }, status=status.HTTP_200_OK
             )
         except Exception as e:
-            self.create_log(
-                log_status=LogStatus.FAILED, action="SET WEEKLY AVAILABILITY", entity=self.request.user.service_provider_profile,
-                metadata={"message": "Failed to Set Your Weekly Availability", "error": str(e)}
+            handle_log_engine(
+                request=request, action="SET WEEKLY AVAILABILITY", status=LogStatus.FAILED, message=str(e), entity=self.request.user.service_provider_profile,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
@@ -818,9 +844,11 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                 )
                 excep.type = HelperSlotExceptionType.AVAILABLE if is_available is True else HelperSlotExceptionType.UNAVAILABLE
                 excep.save()
-                self.create_log(
-                    log_status=LogStatus.SUCCESS, action=f"ADD SLOT EXCEPTION: {excep.type}", entity=excep,
-                    for_notify=True, metadata={"message": f"Add New Slot Exception for {excep.type}."}
+
+                handle_log_engine(
+                    request=request, action="ADD SLOT EXCEPTION", status=LogStatus.SUCCESS, message=f"Add New Slot Exception for {excep.type}.",
+                    entity=excep, perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True, role=UserRole.USER, send_to=self.request.user, send_to_type=UserDefault.PROVIDER
                 )
                 return Response(
                     {
@@ -829,9 +857,9 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                     }, status=status.HTTP_200_OK
                 )
         except Exception as e:
-            self.create_log(
-                log_status=LogStatus.FAILED, action="ADD SLOT EXCEPTION", entity=self.request.user.service_provider_profile,
-                metadata={"message": "Failed to Add New Slot Exception.", "error": str(e)}
+            handle_log_engine(
+                request=request, action="ADD SLOT EXCEPTION", status=LogStatus.FAILED, message=str(e), entity=self.request.user.service_provider_profile,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
@@ -868,9 +896,12 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                         'date_status': date_status,
                     }
                 )
-                self.create_log(
-                    log_status=LogStatus.SUCCESS, action="SPECIAL DATE AVAILABILITY", entity=special_date,
-                    for_notify=True, metadata={"message": "Set Your Special Date Availability."}
+
+
+                handle_log_engine(
+                    request=request, action="SPECIAL DATE AVAILABILITY", status=LogStatus.SUCCESS, message="Set Your Special Date Availability.",
+                    entity=special_date, perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True, role=UserRole.USER, send_to=self.request.user, send_to_type=UserDefault.PROVIDER
                 )
                 return Response(
                     {
@@ -879,9 +910,9 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                     }, status=status.HTTP_200_OK
                 )
         except Exception as e:
-            self.create_log(
-                log_status=LogStatus.FAILED, action="SPECIAL DATE AVAILABILITY", entity=self.request.user.service_provider_profile,
-                metadata={"message": "Failed to Set Your Special Date Availability.", "error": str(e)}
+            handle_log_engine(
+                request=request, action="SPECIAL DATE AVAILABILITY", status=LogStatus.FAILED, message=str(e), entity=self.request.user.service_provider_profile,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
@@ -1065,15 +1096,6 @@ class SaveHelperProfileViews(UpdateReadOnlyModelViewSet):
     serializer_class = SaveHelperProfileSerializer
     permission_classes = [IsAuthenticated]
 
-    def create_log(self, log_status=None, action=None, entity=None, for_notify=False, metadata={}):
-        data = {
-            "user": self.request.user, "user_type": UserDefault.CUSTOMER, "action": action, "status": log_status,
-            "entity": entity, "for_notify": for_notify, "request": self.request,
-            "metadata": metadata
-        }
-        log = LogActivityModule(data)
-        log.create()
-
     def get_queryset(self):
         return SavedHelper.objects.filter(customer=self.request.user.customer_profile)
     
@@ -1093,9 +1115,10 @@ class SaveHelperProfileViews(UpdateReadOnlyModelViewSet):
                     customer=request.user.customer_profile,
                     helper=helper_profile
                 )
-                self.create_log(
-                    log_status=LogStatus.SUCCESS, action="MARK SAVED HELPER", entity=helper_profile,
-                    metadata={"message": "Helper Profile Saved Mark"}
+
+                handle_log_engine(
+                    request=request, action="MARK SAVED HELPER", status=LogStatus.SUCCESS, message="Helper Profile Saved Mark.",
+                    entity=helper_profile, perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
                 )
                 return Response(
                     {
@@ -1104,9 +1127,9 @@ class SaveHelperProfileViews(UpdateReadOnlyModelViewSet):
                     }, status=status.HTTP_200_OK
                 )
         except Exception as e:
-            self.create_log(
-                log_status=LogStatus.FAILED, action="MARK SAVED HELPER",
-                metadata={"message": "Failed Helper profile keep saved!", "error": str(e)}
+            handle_log_engine(
+                request=request, action="MARK SAVED HELPER", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -1120,9 +1143,10 @@ class SaveHelperProfileViews(UpdateReadOnlyModelViewSet):
         try:
             saved_helper = self.get_object()
             saved_helper.delete()
-            self.create_log(
-                log_status=LogStatus.SUCCESS, action="REMOVE SAVED HELPER",
-                metadata={"message": "Helper Remove From Your Saved Object"}
+
+            handle_log_engine(
+                request=request, action="REMOVE SAVED HELPER", status=LogStatus.SUCCESS, message="Helper Remove From Your Saved Object.",
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -1131,9 +1155,9 @@ class SaveHelperProfileViews(UpdateReadOnlyModelViewSet):
                 }, status=status.HTTP_200_OK
             )
         except Exception as e:
-            self.create_log(
-                log_status=LogStatus.FAILED, action="REMOVE SAVED HELPER",
-                metadata={"message": "Failed Helper profile removed from saved!", "error": str(e)}
+            handle_log_engine(
+                request=request, action="REMOVE SAVED HELPER", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -1156,20 +1180,6 @@ class GetMyReferralCodeView(APIView):
 class RecommendationHelperViewSet(UpdateReadOnlyModelViewSet):
     serializer_class = HelperSerializer
     permission_classes = [IsAuthenticated]
-
-    def create_log(self, log_status=None, action=None, user=None, user_type=None, entity=None, error=None, for_notify=False, metadata={}):
-        data = {
-            "user": user,
-            "user_type": user_type,
-            "action": action,
-            "status": log_status,
-            "entity": entity,
-            "for_notify": for_notify,
-            "request": self.request,
-            "metadata": metadata
-        }
-        log = LogActivityModule(data)
-        log.create()
 
     def get_current_location_lat_lng(self):
         current_location = self.request.query_params.get("current_location", None)
@@ -1209,16 +1219,23 @@ class RecommendationHelperViewSet(UpdateReadOnlyModelViewSet):
             serializer = self.get_serializer(instance)
 
             instance.total_profile_view += 1
-            instance.save()
+            instance.save(update_fields=["total_profile_view"])
 
-            self.create_log(
-                LogStatus.SUCCESS, action="Helper Profile View", user=self.request.user, user_type=UserDefault.CUSTOMER, entity=instance,
-                metadata={"profile_view": "helper profile visit"}
+            handle_log_engine(
+                request=request, action="Helper Profile View", status=LogStatus.SUCCESS, message="Helper profile visit", entity=instance,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
-            if instance.total_profile_view == 13:
-                self.create_log(
-                    LogStatus.SUCCESS, action="100+ Views", user=instance.user, user_type=UserDefault.PROVIDER, entity=request.user, for_notify=True,
-                    metadata={"milestone": "100+ views your profile"}
+            if instance.total_profile_view == 50:
+                handle_log_engine(
+                    request=request, action="50+ Views", status=LogStatus.SUCCESS, message="50+ views your profile",
+                    entity=instance, logify=False, notify=True,
+                    role=UserRole.USER, send_to=instance.user, send_to_type=UserDefault.PROVIDER
+                )
+            elif instance.total_profile_view == 100:
+                handle_log_engine(
+                    request=request, action="100+ Views", status=LogStatus.SUCCESS, message="100+ views your profile",
+                    entity=instance, logify=False, notify=True,
+                    role=UserRole.USER, send_to=instance.user, send_to_type=UserDefault.PROVIDER
                 )
             return self.perform_retrieve(serializer)
 
@@ -1235,20 +1252,6 @@ class MyReferralViewSet(UpdateReadOnlyModelViewSet):
 class MyVoucherViewSet(UpdateReadOnlyModelViewSet):
     serializer_class = VoucherSerializer
     permission_classes = [IsAuthenticated]
-
-    def create_log(self, log_status=None, entity=None, for_notify=False, metadata={}):
-        data = {
-            "user": self.request.user,
-            "user_type": UserDefault.CUSTOMER,
-            "action": "ADD NEW VOUCHER",
-            "status": log_status,
-            "entity": entity,
-            "for_notify": for_notify,
-            "request": self.request,
-            "metadata": metadata
-        }
-        log = LogActivityModule(data)
-        log.create()
 
     def get_queryset(self):
         vouchers = Voucher.objects.filter(
@@ -1281,9 +1284,9 @@ class MyVoucherViewSet(UpdateReadOnlyModelViewSet):
                     expiry_date=offer_voucher.expiry_date,
                 )
 
-                self.create_log(
-                    log_status=LogStatus.SUCCESS, entity=new_voucher, for_notify=True,
-                    metadata={"message": "Add New Promo Voucher"}
+                handle_log_engine(
+                    request=request, action="ADD NEW VOUCHER", status=LogStatus.SUCCESS, message="Add New Promo Voucher", entity=new_voucher,
+                    perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER, notify=True, role=UserRole.USER
                 )
                 return Response(
                     {
@@ -1292,9 +1295,9 @@ class MyVoucherViewSet(UpdateReadOnlyModelViewSet):
                     }
                 )
         except Exception as e:
-            self.create_log(
-                log_status=LogStatus.FAILED,
-                metadata={"message": "Failed to Add New Promo Voucher", "error": str(e)}
+            handle_log_engine(
+                request=request, action="ADD NEW VOUCHER", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -1307,20 +1310,6 @@ class MyVoucherViewSet(UpdateReadOnlyModelViewSet):
 class ApplyVoucherView(GenericAPIView):
     serializer_class = ApplyVoucherSerializer
     permission_classes = [IsAuthenticated]
-
-    def create_log(self, log_status=None, entity=None, for_notify=False, metadata={}):
-        data = {
-            "user": self.request.user,
-            "user_type": UserDefault.CUSTOMER,
-            "action": "Apply Voucher Code",
-            "status": log_status,
-            "entity": entity,
-            "for_notify": for_notify,
-            "request": self.request,
-            "metadata": metadata
-        }
-        log = LogActivityModule(data)
-        log.create()
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -1346,8 +1335,9 @@ class ApplyVoucherView(GenericAPIView):
 
             final_amount = amount - discount
 
-            self.create_log(
-                log_status=LogStatus.SUCCESS, entity=voucher, metadata={"message": "Voucher Code Apply For a Order!"}
+            handle_log_engine(
+                request=request, action="Apply Voucher Code", status=LogStatus.SUCCESS, message="Voucher Code Apply For a Order.",
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
             return Response({
                 "voucher_id": voucher.id,
@@ -1358,8 +1348,9 @@ class ApplyVoucherView(GenericAPIView):
             }, status=status.HTTP_200_OK)
         except ValidationError:
             errors = {key: str(value[0]) for key, value in serializer.errors.items()}
-            self.create_log(
-                log_status=LogStatus.FAILED, metadata={"message": "Failed to Apply Voucher Code For a Order!"}
+            handle_log_engine(
+                request=request, action="Apply Voucher Code", status=LogStatus.FAILED, message="Failed to Apply Voucher Code.",
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -1368,8 +1359,9 @@ class ApplyVoucherView(GenericAPIView):
                 }
             )
         except Exception as e:
-            self.create_log(
-                log_status=LogStatus.FAILED, metadata={"message": "Failed to Apply Voucher Code For a Order!", "error": str(e)}
+            handle_log_engine(
+                request=request, action="Apply Voucher Code", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -1394,15 +1386,6 @@ class CustomerPaymentMethodViewSet(UpdateModelViewSet):
     serializer_class = CustomerPaymentMethodSerializer
     permission_classes = [IsAuthenticated]
 
-    def create_log(self, log_status=None, action=None, entity=None, for_notify=False, metadata={}):
-        data = {
-            "user": self.request.user, "user_type": UserDefault.CUSTOMER, "action": action, "status": log_status, "entity": entity,
-            "for_notify": for_notify, "request": self.request,
-            "metadata": metadata
-        }
-        log = LogActivityModule(data)
-        log.create()
-
     def get_queryset(self):
         return CustomerPaymentMethod.objects.filter(
             user=self.request.user
@@ -1410,16 +1393,16 @@ class CustomerPaymentMethodViewSet(UpdateModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
-        self.create_log(
-            log_status=LogStatus.SUCCESS, action="ADD NEW PAYMENT METHOD", entity=serializer.instance, for_notify=True,
-            metadata={"message": "Add New Payment Method"}
+        handle_log_engine(
+            request=self.request, action="ADD NEW PAYMENT METHOD", status=LogStatus.SUCCESS, message="Add New Payment Method.", entity=serializer.instance,
+            perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER, notify=True, role=UserRole.USER
         )
     
     def perform_update(self, serializer):
         serializer.save()
-        self.create_log(
-            log_status=LogStatus.SUCCESS, action="UPDATE PAYMENT METHOD", entity=serializer.instance, for_notify=True,
-            metadata={"message": "Update Payment Method"}
+        handle_log_engine(
+            request=self.request, action="UPDATE PAYMENT METHOD", status=LogStatus.SUCCESS, message="Update Payment Method.", entity=serializer.instance,
+            perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
         )
     
     @action(detail=True, methods=["post"], url_path="set-default")
@@ -1428,20 +1411,18 @@ class CustomerPaymentMethodViewSet(UpdateModelViewSet):
             with transaction.atomic():
                 obj = self.get_object()
                 self.get_queryset().update(is_default=False)
-                # CustomerPaymentMethod.objects.filter(
-                #     user=request.user
-                # ).update(is_default=False)
                 obj.is_default = True
                 obj.save()
-                self.create_log(
-                    log_status=LogStatus.SUCCESS, action="SET DEFAULT PAYMENT METHOD", entity=obj, for_notify=True,
-                    metadata={"message": "Set Default Payment Method"}
+
+                handle_log_engine(
+                    request=self.request, action="SET DEFAULT PAYMENT METHOD", status=LogStatus.SUCCESS, message="Set Default Payment Method.", entity=obj,
+                    perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
                 )
                 return Response({"status": True, "message": "Default updated"}, status=status.HTTP_200_OK)
         except Exception as e:
-            self.create_log(
-                log_status=LogStatus.FAILED, action="SET DEFAULT PAYMENT METHOD", entity=obj,
-                metadata={"message": "Failed to Set Default Payment Method", "error": str(e)}
+            handle_log_engine(
+                request=self.request, action="SET DEFAULT PAYMENT METHOD", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -1452,23 +1433,14 @@ class CustomerPaymentMethodViewSet(UpdateModelViewSet):
 
     def perform_destroy(self, instance):
         instance.delete()
-        self.create_log(
-            log_status=LogStatus.SUCCESS, action="REMOVE PAYMENT METHOD", for_notify=True,
-            metadata={"message": "Remove Payment Method"}
+        handle_log_engine(
+            request=self.request, action="REMOVE PAYMENT METHOD", status=LogStatus.SUCCESS, message="Remove Payment Method.",
+            perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
         )
 
 class ProviderPayoutMethodViewSet(UpdateModelViewSet):
     serializer_class = ProviderPayoutMethodSerializer
     permission_classes = [IsAuthenticated]
-
-    def create_log(self, log_status=None, action=None, entity=None, for_notify=False, metadata={}):
-        data = {
-            "user": self.request.user, "user_type": UserDefault.PROVIDER, "action": action, "status": log_status, "entity": entity,
-            "for_notify": for_notify, "request": self.request,
-            "metadata": metadata
-        }
-        log = LogActivityModule(data)
-        log.create()
 
     def get_queryset(self):
         return ProviderPayoutMethod.objects.filter(
@@ -1479,23 +1451,23 @@ class ProviderPayoutMethodViewSet(UpdateModelViewSet):
         serializer.save(
             provider=self.request.user.hasServiceProviderProfile
         )
-        self.create_log(
-            log_status=LogStatus.SUCCESS, action="ADD NEW PAYOUT METHOD", entity=serializer.instance, for_notify=True,
-            metadata={"message": "Add New Payout Method"}
+        handle_log_engine(
+            request=self.request, action="ADD NEW PAYOUT METHOD", status=LogStatus.SUCCESS, message="Add New Payout Method.", entity=serializer.instance,
+            perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER, notify=True, role=UserRole.USER
         )
     
     def perform_update(self, serializer):
         serializer.save()
-        self.create_log(
-            log_status=LogStatus.SUCCESS, action="UPDATE PAYOUT METHOD", entity=serializer.instance, for_notify=True,
-            metadata={"message": "Update Payout Method"}
+        handle_log_engine(
+            request=self.request, action="UPDATE PAYOUT METHOD", status=LogStatus.SUCCESS, message="Update Payout Method.", entity=serializer.instance,
+            perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
         )
     
     def perform_destroy(self, instance):
         instance.delete()
-        self.create_log(
-            log_status=LogStatus.SUCCESS, action="REMOVE PAYOUT METHOD", for_notify=True,
-            metadata={"message": "Remove Payout Method"}
+        handle_log_engine(
+            request=self.request, action="REMOVE PAYOUT METHOD", status=LogStatus.SUCCESS, message="Remove Payout Method.",
+            perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
         )
 
     @action(detail=True, methods=["post"], url_path="set-default")
@@ -1506,15 +1478,15 @@ class ProviderPayoutMethodViewSet(UpdateModelViewSet):
                 self.get_queryset().update(is_default=False)
                 obj.is_default = True
                 obj.save()
-                self.create_log(
-                    log_status=LogStatus.SUCCESS, action="SET DEFAULT PAYOUT METHOD", entity=obj, for_notify=True,
-                    metadata={"message": "Set Default Payout Method"}
+                handle_log_engine(
+                    request=self.request, action="SET DEFAULT PAYOUT METHOD", status=LogStatus.SUCCESS, message="Set Default Payout Method.", entity=obj,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
                 )
                 return Response({"status": True, "message": "Default updated"}, status=status.HTTP_200_OK)
         except Exception as e:
-            self.create_log(
-                log_status=LogStatus.FAILED, action="SET DEFAULT PAYOUT METHOD", entity=obj,
-                metadata={"message": "Failed to Set Default Payout Method", "error": str(e)}
+            handle_log_engine(
+                request=self.request, action="SET DEFAULT PAYOUT METHOD", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {

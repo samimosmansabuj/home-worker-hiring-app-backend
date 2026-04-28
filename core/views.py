@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from .models import Ticket, SignUpSlider, CustomerScreenSlide
 from .serializers import TicketSerializer, TicketReplySerializer, TicketStatusUpdateSerializer, AdminWalletSerializer, SignUpSliderSerializer, CustomerScreenSlideSerializer, HelperSerializer
 from find_worker_config.model_choice import UserRole, TicketStatus, LogStatus, UserDefault
-from find_worker_config.utils import UpdateModelViewSet, LogActivityModule, UpdateReadOnlyModelViewSet
+from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
 from django.db import transaction
 from rest_framework.views import APIView
 from task.models import AdminWallet
@@ -15,7 +15,7 @@ from rest_framework.permissions import IsAdminUser
 from .paginations import HelperPagination
 from account.models import User, Address, ServiceProviderProfile
 from math import radians, cos, sin, asin, sqrt
-from .services.log_engine import CreateLog
+from .services.log_engine import CreateLog, handle_log_engine
 
 
 # ----------------------------------------------------------
@@ -138,6 +138,14 @@ class TicketViewSet(UpdateModelViewSet):
                 ticket.status = "closed"
                 ticket.save()
                 serializer = self.get_serializer(ticket)
+
+
+
+                # handle_log_engine(
+                #     request=request, action="TICKET CLOSE", status=LogStatus.SUCCESS, message="Provider Document Verification Complete", entity=verification,
+                #     perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER, notify=True, role=UserRole.USER, send_to=self.request.user,
+                #     send_to_type=UserDefault.PROVIDER
+                # )
                 CreateLog(
                     request=self.request, log_status=LogStatus.SUCCESS, action="TICKET CLOSE", user=self.request.user, user_type=log_user_type,
                     entity=ticket, for_notify=False, metadata={"message": f"{current_user_role} Close this Ticket."}
@@ -344,6 +352,26 @@ class HelperListViewset(UpdateReadOnlyModelViewSet):
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
+        instance.total_profile_view += 1
+        instance.save(update_fields=["total_profile_view"])
+
+        handle_log_engine(
+            request=request, action="Helper Profile View", status=LogStatus.SUCCESS, message="Helper profile visit", entity=instance,
+            perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
+        )
+        if instance.total_profile_view == 50:
+            handle_log_engine(
+                request=request, action="50+ Views", status=LogStatus.SUCCESS, message="50+ views your profile",
+                entity=instance, logify=False, notify=True,
+                role=UserRole.USER, send_to=instance.user, send_to_type=UserDefault.PROVIDER
+            )
+        elif instance.total_profile_view == 100:
+            handle_log_engine(
+                request=request, action="100+ Views", status=LogStatus.SUCCESS, message="100+ views your profile",
+                entity=instance, logify=False, notify=True,
+                role=UserRole.USER, send_to=instance.user, send_to_type=UserDefault.PROVIDER
+            )
+
         office = instance.office_location
         if office or office.lat or office.lng:
             # self.get_map_distance(office.lat, office.lng) # use For Google API Destination

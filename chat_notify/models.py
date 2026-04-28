@@ -1,7 +1,7 @@
 from django.db import models
 from account.models import CustomerProfile, ServiceProviderProfile, User
 # from task.models import ServiceTask
-from find_worker_config.model_choice import SendMessageType, CustomOfferStatus, NotifyType, UserDefault
+from find_worker_config.model_choice import SendMessageType, CustomOfferStatus, NotifyType, UserDefault, UserRole
 import uuid
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -68,10 +68,11 @@ class Attachment(models.Model):
 
 
 class Notification(models.Model):
-    received = models.ForeignKey(User, on_delete=models.CASCADE)
+    notification_for = models.CharField(max_length=15, choices=UserRole.choices, default=UserRole.ADMIN)
+    receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications", blank=True, null=True)
     profile = models.CharField(max_length=20, choices=UserDefault.choices, blank=True, null=True)
     action = models.CharField(max_length=255)
-    metadata = models.JSONField(default=dict, blank=True, null=True)
+    message = models.CharField(max_length=255, blank=True, null=True)
     is_read = models.BooleanField(default=False)
 
     entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
@@ -82,10 +83,10 @@ class Notification(models.Model):
 
     @property
     def notify_text(self):
-        return f"{self.received.first_name} {self.received.last_name if self.received.last_name else ''} {self.action} at {self.created_at}"
+        return f"{self.receiver.first_name} {self.receiver.last_name if self.receiver.last_name else ''} {self.action} at {self.created_at}"
 
     def __str__(self):
-        return f"{self.received.first_name} {self.received.last_name if self.received.last_name else ''} {self.action} at {self.created_at}"
+        return f"{self.receiver.first_name} {self.receiver.last_name if self.receiver.last_name else ''} {self.action} at {self.created_at}"
     
 
 
