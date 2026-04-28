@@ -21,7 +21,6 @@ from core.serializers import HelperSerializer
 from .models import ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
-from core.services.log_engine import CreateLog
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
 from django.utils.translation import gettext_lazy as _
@@ -38,7 +37,7 @@ from task.serializers import PaymentTransaction, PaymentTransactionDetailSeriali
 from rest_framework.decorators import action
 User = get_user_model()
 
-from core.services.log_engine import LogActivityEngine, handle_log_engine
+from core.services.log_engine import handle_log_engine
 
 
 
@@ -58,19 +57,6 @@ class WelComeAPI(APIView):
 class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = CurrentUserInfoSerializer
-
-    def handle_log(self, status, message, user_type=None, entity=None, notify=False):
-        log_data = {
-            "action": "Profile Update",
-            "status": status,
-            "message": message,
-            "entity": entity,
-            "request": self.request
-        }
-        log_engine = LogActivityEngine(log_data)
-        log_engine.create_log(self.request.user or None)
-        if notify:
-            log_engine.send_notification(UserRole.USER, receiver=self.request.user or None)
 
     def get_object(self):
         user = self.request.user
@@ -121,8 +107,8 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
                 if getattr(instance, '_prefetched_objects_cache', None):
                     instance._prefetched_objects_cache = {}
                 
-                self.handle_log(
-                    LogStatus.SUCCESS, "User Profile Update"
+                handle_log_engine(
+                    request=request, action="PROFILE UPDATE", status=LogStatus.SUCCESS, message="User Profile Update.", perform_user=self.request.user
                 )
                 return Response(
                     {
@@ -131,8 +117,8 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
                     }
                 )
         except ValidationError as e:
-            self.handle_log(
-                LogStatus.FAILED, "Failed to Update Profile"
+            handle_log_engine(
+                request=request, action="PROFILE UPDATE", status=LogStatus.FAILED, message="Failed to Update Profile.", perform_user=self.request.user
             )
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
             return Response(
@@ -141,35 +127,12 @@ class CurrentUserInfoView(RetrieveUpdateDestroyAPIView):
                     "message": error
                 }, status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
-            self.handle_log(
-                LogStatus.FAILED, str(e)
-            )
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
 
 class UserAddressViews(UpdateModelViewSet):
     model = Address
     queryset = Address.objects.all()
     serializer_class = UserAddressSerializer
     permission_classes = [IsAuthenticated]
-
-    def handle_log(self, action, status, message, entity=None, user_type=None, notify=False):
-        log_data = {
-            "action": action,
-            "status": status,
-            "message": message,
-            "entity": entity,
-            "request": self.request
-        }
-        log_engine = LogActivityEngine(log_data)
-        log_engine.create_log(self.request.user or None)
-        if notify:
-            log_engine.send_notification(UserRole.USER, receiver=self.request.user or None)
 
     def get_user(self):
         return self.request.user
@@ -202,15 +165,17 @@ class UserAddressViews(UpdateModelViewSet):
 
     def perform_create(self, serializer):
         address_serializer = serializer.save(is_default=True)
-        self.handle_log(
-            "Add New Address", LogStatus.SUCCESS, "Add new address", entity=address_serializer
+        handle_log_engine(
+            request=self.request, action="CREATE ADDRESS", status=LogStatus.SUCCESS, message="Add New User Address.", entity=address_serializer,
+            perform_user=self.request.user
         )
         return address_serializer
     
     def perform_update(self, serializer):
         address_serializer = serializer.save(is_default=True)
-        self.handle_log(
-            "Update Address", LogStatus.SUCCESS, "Update Address", entity=address_serializer
+        handle_log_engine(
+            request=self.request, action="UPDATE ADDRESS", status=LogStatus.SUCCESS, message="Update User Address.", entity=address_serializer,
+            perform_user=self.request.user
         )
         return address_serializer
 
@@ -229,8 +194,9 @@ class UserAddressViews(UpdateModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             with transaction.atomic():
-                self.handle_log(
-                    "Delete Address", LogStatus.SUCCESS, "Delete Address"
+                handle_log_engine(
+                    request=request, action="DELETE ADDRESS", status=LogStatus.SUCCESS, message="Delete User Address.",
+                    perform_user=self.request.user
                 )
                 super().destroy(request, *args, **kwargs)
                 return Response(
@@ -240,8 +206,9 @@ class UserAddressViews(UpdateModelViewSet):
                     }, status=status.HTTP_200_OK
                 )
         except Exception as e:
-            self.handle_log(
-                "Delete Address", LogStatus.FAILED, "Failed to Delete Address"
+            handle_log_engine(
+                request=request, action="DELETE ADDRESS", status=LogStatus.FAILED, message="Failed to Delete User Address.",
+                perform_user=self.request.user
             )
             return Response(
                 {
@@ -357,19 +324,6 @@ class CreateUserHelperView(CreateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = CurrentUserHelperSerializer
 
-    def handle_log(self, status, message, entity=None, user_type=None, notify=False):
-        log_data = {
-            "action": "Helper Created",
-            "status": status,
-            "message": message,
-            "entity": entity,
-            "request": self.request
-        }
-        log_engine = LogActivityEngine(log_data)
-        log_engine.create_log(self.request.user or None, user_type=user_type)
-        if notify:
-            log_engine.send_notification(UserRole.USER, receiver=self.request.user or None, profile=user_type)
-
     def get_object(self):
         user = self.request.user
         if self.get_helper_profile(user):
@@ -388,8 +342,11 @@ class CreateUserHelperView(CreateAPIView):
                 serializer.is_valid(raise_exception=True)
                 serializer.save(user=self.get_object())
 
-                self.handle_log(
-                    LogStatus.SUCCESS, "Create Helper Profile", entity=serializer.instance, user_type=UserDefault.PROVIDER, notify=True
+                handle_log_engine(
+                    request=self.request, action="CREATE HELPER", status=LogStatus.SUCCESS, message="Create User Helper Profile.", entity=serializer.instance,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True,
+                    notification_message="Successfully Create Your Helper Profile."
                 )
                 return Response(
                     {
@@ -399,8 +356,9 @@ class CreateUserHelperView(CreateAPIView):
                 )
         except ValidationError as e:
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            self.handle_log(
-                LogStatus.FAILED, "Create Helper Profile"
+            handle_log_engine(
+                request=self.request, action="CREATE HELPER", status=LogStatus.FAILED, message="Failed to Create User Helper Profile.",
+                perform_user=self.request.user
             )
             return Response(
                 {
@@ -408,31 +366,10 @@ class CreateUserHelperView(CreateAPIView):
                     "message": error
                 }, status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
-            self.handle_log(
-                LogStatus.FAILED, str(e)
-            )
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
 
 class CurrentUserHelperView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = CurrentUserHelperSerializer
-
-    def handle_log(self, status, message, entity=None, user_type=None):
-        log_data = {
-            "action": "Helper Updated",
-            "status": status,
-            "message": message,
-            "entity": entity,
-            "request": self.request
-        }
-        log_engine = LogActivityEngine(log_data)
-        log_engine.create_log(self.request.user or None, user_type=user_type)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -467,8 +404,9 @@ class CurrentUserHelperView(RetrieveUpdateDestroyAPIView):
                 if getattr(instance, '_prefetched_objects_cache', None):
                     instance._prefetched_objects_cache = {}
                 
-                self.handle_log(
-                    LogStatus.SUCCESS, "Update Helper Profile", entity=instance
+                handle_log_engine(
+                    request=self.request, action="UPDATE HELPER", status=LogStatus.SUCCESS, message="Update User Helper Profile.", entity=instance,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
                 )
                 return Response(
                     {
@@ -478,23 +416,14 @@ class CurrentUserHelperView(RetrieveUpdateDestroyAPIView):
                 )
         except ValidationError as e:
             error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
-            self.handle_log(
-                LogStatus.FAILED, "Failed to Update Helper Profile"
+            handle_log_engine(
+                request=self.request, action="UPDATE HELPER", status=LogStatus.FAILED, message="Failed to Update User Helper Profile.",
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
                     "status": False,
                     "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            self.handle_log(
-                LogStatus.FAILED, str(e)
-            )
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
                 }, status=status.HTTP_400_BAD_REQUEST
             )
 

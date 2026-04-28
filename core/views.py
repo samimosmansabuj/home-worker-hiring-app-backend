@@ -15,7 +15,7 @@ from rest_framework.permissions import IsAdminUser
 from .paginations import HelperPagination
 from account.models import User, Address, ServiceProviderProfile
 from math import radians, cos, sin, asin, sqrt
-from .services.log_engine import CreateLog, handle_log_engine
+from .services.log_engine import handle_log_engine
 
 
 # ----------------------------------------------------------
@@ -58,9 +58,14 @@ class TicketViewSet(UpdateModelViewSet):
             raise Exception("Invalid Profile Type")
         with transaction.atomic():
             instance = serializer.save(user=user, user_profile_type=user_profile_type)
-            CreateLog(
-                request=self.request, log_status=LogStatus.SUCCESS, action="CREATE NEW TICKET", user=self.request.user, user_type=user_profile_type,
-                entity=instance, for_notify=True, metadata={"message": "Create a New Ticket"}
+            
+            handle_log_engine(
+                request=self.request, action="CREATE NEW TICKET", status=LogStatus.SUCCESS, message="Create a New Ticket.", entity=instance,
+                perform_user=self.request.user, perform_user_type=user_profile_type, notify=True, role=UserRole.USER
+            )
+            handle_log_engine(
+                request=self.request, action="CREATE NEW TICKET", status=LogStatus.SUCCESS, message="Create a New Ticket.", entity=instance,
+                notify=True, role=UserRole.ADMIN
             )
             return instance
     
@@ -85,14 +90,23 @@ class TicketViewSet(UpdateModelViewSet):
                     ticket.status = TicketStatus.OPEN
                 ticket.save()
 
-                CreateLog(
-                    request=self.request, log_status=LogStatus.SUCCESS, action="REPLY FOR TICKET", user=self.request.user, user_type=log_user_type,
-                    entity=ticket_reply, for_notify=False, metadata={"message": f"{current_user_role} Reply for this Ticket."}
+                # Handle Log and Notification---
+                handle_log_engine(
+                    request=request, action="REPLY FOR TICKET", status=LogStatus.SUCCESS, message="Send Reply for this Ticket.", entity=ticket_reply,
+                    perform_user=self.request.user, perform_user_type=log_user_type, notify=False, logify=True
                 )
                 if current_user_role == UserRole.ADMIN:
-                    CreateLog(
-                        request=self.request, log_status=LogStatus.SUCCESS, action="TICKET REPLY RECEIVED", user=ticket.user, user_type=ticket.user_profile_type,
-                        entity=ticket_reply, for_notify=True, metadata={"message": "Admin Reply for this Ticket."}
+                    handle_log_engine(
+                        request=request, action="TICKET REPLY RECEIVED", status=LogStatus.SUCCESS, message="Received a Reply For this Ticket.", entity=ticket_reply,
+                        # perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER, 
+                        notify=True, logify=False,
+                        role=UserRole.USER, send_to=ticket.user, send_to_type=ticket.user_profile_type
+                    )
+                else:
+                    handle_log_engine(
+                        request=request, action="TICKET REPLY RECEIVED", status=LogStatus.SUCCESS, message="Received a Reply For this Ticket.", entity=ticket_reply,
+                        notify=True, logify=False,
+                        role=UserRole.ADMIN
                     )
                 return Response(
                     {
@@ -101,9 +115,9 @@ class TicketViewSet(UpdateModelViewSet):
                     }, status=status.HTTP_201_CREATED
                 )
         except ValidationError:
-            CreateLog(
-                request=self.request, log_status=LogStatus.FAILED, action="REPLY FOR TICKET", user=self.request.user, user_type=log_user_type, 
-                entity=ticket, for_notify=False, metadata={"message": f"Failed to {current_user_role} Reply for this Ticket.", "error": "validation error"}
+            handle_log_engine(
+                request=request, action="REPLY FOR TICKET", status=LogStatus.FAILED, message="Failed to Reply for this Ticket.",
+                perform_user=self.request.user, perform_user_type=log_user_type or None
             )
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             return Response(
@@ -113,9 +127,9 @@ class TicketViewSet(UpdateModelViewSet):
                 },status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            CreateLog(
-                request=self.request, log_status=LogStatus.FAILED, action="REPLY FOR TICKET", user=self.request.user, user_type=log_user_type, 
-                entity=ticket, for_notify=False, metadata={"message": f"Failed to {current_user_role} Reply for this Ticket.", "error": str(e)}
+            handle_log_engine(
+                request=request, action="REPLY FOR TICKET", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=log_user_type or None
             )
             return Response(
                 {
@@ -139,21 +153,24 @@ class TicketViewSet(UpdateModelViewSet):
                 ticket.save()
                 serializer = self.get_serializer(ticket)
 
-
-
-                # handle_log_engine(
-                #     request=request, action="TICKET CLOSE", status=LogStatus.SUCCESS, message="Provider Document Verification Complete", entity=verification,
-                #     perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER, notify=True, role=UserRole.USER, send_to=self.request.user,
-                #     send_to_type=UserDefault.PROVIDER
-                # )
-                CreateLog(
-                    request=self.request, log_status=LogStatus.SUCCESS, action="TICKET CLOSE", user=self.request.user, user_type=log_user_type,
-                    entity=ticket, for_notify=False, metadata={"message": f"{current_user_role} Close this Ticket."}
+                # Hanlde Log and Notification---
+                handle_log_engine(
+                    request=request, action="TICKET CLOSE", status=LogStatus.SUCCESS, message="Mark Close this Ticket.", entity=ticket,
+                    perform_user=self.request.user, perform_user_type=log_user_type, notify=False, logify=True
                 )
                 if current_user_role == UserRole.ADMIN:
-                    CreateLog(
-                        request=self.request, log_status=LogStatus.SUCCESS, action="TICKET CLOSE", user=ticket.user, user_type=ticket.user_profile_type,
-                        entity=ticket, for_notify=True, metadata={"message": f"{current_user_role} Close this Ticket."}
+                    handle_log_engine(
+                        request=request, action="TICKET CLOSE", status=LogStatus.SUCCESS, message="Mark Close this Ticket.", entity=ticket,
+                        # perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER, 
+                        notify=True, logify=False,
+                        role=UserRole.USER, send_to=ticket.user, send_to_type=ticket.user_profile_type
+                    )
+                else:
+                    handle_log_engine(
+                        request=request, action="TICKET CLOSE", status=LogStatus.SUCCESS, message="Mark Close this Ticket.", entity=ticket,
+                        # perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER, 
+                        notify=True, logify=False,
+                        role=UserRole.ADMIN
                     )
                 return Response(
                     {
@@ -162,9 +179,9 @@ class TicketViewSet(UpdateModelViewSet):
                     }
                 )
         except Exception as e:
-            CreateLog(
-                request=self.request, log_status=LogStatus.FAILED, action="TICKET CLOSE", user=self.request.user, user_type=log_user_type, 
-                entity=ticket, for_notify=False, metadata={"message": f"Failed to {current_user_role} Close this Ticket.", "error": str(e)}
+            handle_log_engine(
+                request=request, action="TICKET CLOSE", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=log_user_type or None
             )
             return Response(
                 {

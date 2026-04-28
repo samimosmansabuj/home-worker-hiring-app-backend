@@ -4,21 +4,22 @@ from django.contrib.contenttypes.models import ContentType
 from account.models import ActivityLog
 from chat_notify.models import Notification
 from django.db import transaction
-from chat_notify.utils import push_notification
+from chat_notify.utils import push_notification, push_notify_role
 from chat_notify.models import Notification
 
 
 # handle_log_engine(
 #     request=request, action="Provider Verification", status=LogStatus.SUCCESS, message="Provider Document Verification Complete", entity=verification,
-#     perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER, notify=True, role=UserRole.USER, send_to=self.request.user,
-#     send_to_type=UserDefault.PROVIDER
+#     perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+#     notify=True, logify=True,
+#     role=UserRole.USER, send_to=self.request.user, send_to_type=UserDefault.PROVIDER, notification_message=""
 # )
 # handle_log_engine(
 #     request=request, action="Provider Verification", status=LogStatus.FAILED, message=str(e),
 #     perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
 # )
 
-def handle_log_engine(request, action, status, message, entity=None, perform_user=None, perform_user_type=None, logify=True, notify=False, role=None, send_to=None, send_to_type=None):
+def handle_log_engine(request, action, status, message, entity=None, perform_user=None, perform_user_type=None, logify=True, notify=False, role=None, send_to=None, send_to_type=None, notification_message=None):
     log_data = {
         "action": action,
         "status": status,
@@ -30,7 +31,7 @@ def handle_log_engine(request, action, status, message, entity=None, perform_use
     if logify:
         log_engine.create_log(perform_user, perform_user_type)
     if notify:
-        log_engine.send_notification(role, receiver=send_to or perform_user or request.user, profile=send_to_type or perform_user_type or None)
+        log_engine.send_notification(role, receiver=send_to or perform_user or request.user, profile=send_to_type or perform_user_type or None, notification_message=notification_message or None)
 
 class LogActivityEngine:
     def get_confirm_data(self, field, field_name):
@@ -85,53 +86,51 @@ class LogActivityEngine:
             raise Exception("Someting wrong for create log!")
 
 
-    def get_notification_data(self, notification_for, receiver, profile):
+    def get_notification_data(self, notification_for, receiver, profile, notification_message=None):
         dict_data = {
             "notification_for": notification_for,
             "receiver": receiver,
             "profile": profile,
             "action": self.action,
-            "message": self.message
+            "message": notification_message or self.message
         }
         if self.entity:
             dict_data["entity_type"] = self.get_entity_type()
             dict_data["entity_id"] = self.entity.id
         return dict_data
 
-    def send_notification(self, notification_for, receiver=None, profile=None):
+    def send_notification(self, notification_for, receiver=None, profile=None, notification_message=None):
         receiver = receiver
         profile = profile
         notification_for = self.get_confirm_data(notification_for, "Notification send to")
         try:
             with transaction.atomic():
                 notification = Notification.objects.create(
-                    **self.get_notification_data(notification_for, receiver, profile)
+                    **self.get_notification_data(notification_for, receiver, profile, notification_message)
                 )
                 # Need Logic For Dynamic Set
-                push_notification(
-                    user_id=notification.receiver.id,
-                    data={
-                        "notify_text": notification.notify_text,
-                        "entity_type": "order",
-                        "entity": notification.entity_id,
-                        "is_read": notification.is_read
-                    }
-                )
+                if receiver and profile:
+                    push_notification(
+                        user_id=notification.receiver.id,
+                        data={
+                            "notify_text": notification.notify_text,
+                            "entity_type": notification.entity_type.model if notification.entity_type else None,
+                            "entity": notification.entity_id,
+                            "is_read": notification.is_read
+                        }
+                    )
+                elif notification_for:
+                    push_notify_role(
+                        role=notification_for,
+                        data={
+                            "notify_text": notification.notify_text,
+                            "entity_type": notification.entity_type.model if notification.entity_type else None,
+                            "entity": notification.entity_id,
+                            "is_read": notification.is_read
+                        }
+                    )
                 return notification
         except Exception as e:
             print("error: ", e)
             raise Exception("Someting wrong for create log!")
 
-def CreateLog(request, log_status, action, user=None, user_type=None, entity=None, for_notify=False, metadata={}):
-    data = {
-        "status": log_status,
-        "action": action,
-        "user": user,
-        "user_type": user_type,
-        "entity": entity,
-        "for_notify": for_notify,
-        "metadata": metadata,
-        "request": request
-    }
-    log = LogActivityEngine(data)
-    log.create()

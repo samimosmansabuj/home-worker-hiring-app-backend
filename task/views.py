@@ -1,4 +1,3 @@
-from django.shortcuts import get_object_or_404
 from account.models import HelperSlotException
 from .serializers import ServiceCategorySerializer, ServiceSubCategorySerializer, ReviewAndRatingSerializer, PaymentTransactionSerializer, CompleteSerializer, CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, SetHourSerializer, OrderSerializerAll, StartWorkSerializer, ReviewAndRatingSerializer, OrderRefundRequestSerializer
 from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet
@@ -9,15 +8,12 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from find_worker_config.permissions import IsAdminWritePermissionOnly, ForCustomerProfile, ForAdminProfile
-from chat_notify.utils import push_notify_all, push_notify_role, push_notification
 from find_worker_config.model_choice import UserRole, OrderStatus, OrderPaymentStatus, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault, LogStatus, HelperSlotExceptionType, OrderChangesRequestStatus, ChangesRequestType
 from django.db import transaction
-from account.utils import generate_otp
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework.generics import CreateAPIView
-from math import radians, cos, sin, asin, sqrt
-from core.services.log_engine import CreateLog
+from core.services.log_engine import handle_log_engine
 from datetime import datetime, timedelta
 
 # ============================================================
@@ -28,14 +24,12 @@ class ServiceCategoryViewSet(UpdateModelViewSet):
     permission_classes = [IsAdminWritePermissionOnly]
 
     def perform_update(self, serializer):
-        push_notify_role(
-            role=UserRole.ADMIN,
-            data={
-                "type": "CATEGORY_UPDATE",
-                "message": "Category Updated!"
-            }
+        instance = serializer.save()
+        handle_log_engine(
+            request=self.request, action="CREATE CATEGORY", status=LogStatus.SUCCESS, message="Create a New Category.", entity=instance,
+            perform_user=self.request.user
         )
-        return super().perform_update(serializer)
+        return instance
 
 class ServiceSubCategoryViewSet(UpdateModelViewSet):
     queryset = ServiceSubCategory.objects.all()
@@ -43,14 +37,12 @@ class ServiceSubCategoryViewSet(UpdateModelViewSet):
     permission_classes = [IsAdminWritePermissionOnly]
 
     def perform_update(self, serializer):
-        push_notify_role(
-            role=UserRole.ADMIN,
-            data={
-                "type": "CATEGORY_UPDATE",
-                "message": "Sub Category Updated!"
-            }
+        instance = serializer.save()
+        handle_log_engine(
+            request=self.request, action="CREATE SUB-CATEGORY", status=LogStatus.SUCCESS, message="Create a New Sub-Category.", entity=instance,
+            perform_user=self.request.user
         )
-        return super().perform_update(serializer)
+        return instance
 
 # Category Views Section ===================
 # ============================================================
@@ -77,13 +69,17 @@ class CustomerOrderCreateViews(CreateAPIView):
             self.perform_create(serializer)
             instance = serializer.instance
 
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="CUSTOM OFFER CREATED", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=instance, for_notify=True, metadata={"message": "Custom Offer Created"}
+            handle_log_engine(
+                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Custom Offer Created by Customer", entity=instance,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True, 
+                role=UserRole.USER
             )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="CUSTOM OFFER CREATED", user=instance.provider.user, user_type=UserDefault.PROVIDER,
-                entity=instance, for_notify=True, metadata={"message": "Custom Offer Created"}
+            handle_log_engine(
+                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Create a New Custom Order from Client", entity=instance,
+                perform_user=instance.provider.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER
             )
             return Response(
                 {
@@ -94,9 +90,10 @@ class CustomerOrderCreateViews(CreateAPIView):
             )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="CUSTOM OFFER CREATED", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                for_notify=True, metadata={"message": "Failed to Create Custom Offer"}
+            handle_log_engine(
+                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.FAILED, message="Failed to Create Custom Offer",
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=False, logify=True
             )
             return Response(
                 {
@@ -105,9 +102,10 @@ class CustomerOrderCreateViews(CreateAPIView):
                 },status=status.HTTP_400_BAD_REQUEST
             )
         except PermissionDenied as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="CUSTOM OFFER CREATED", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                for_notify=True, metadata={"message": "Failed to Create Custom Offer", "error": str(e)}
+            handle_log_engine(
+                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=False, logify=True
             )
             return Response(
                 {
@@ -116,9 +114,10 @@ class CustomerOrderCreateViews(CreateAPIView):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="CUSTOM OFFER CREATED", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                for_notify=True, metadata={"message": "Failed to Create Custom Offer", "error": str(e)}
+            handle_log_engine(
+                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=False, logify=True,
             )
             return Response(
                 {
@@ -150,13 +149,12 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             serializer.save(
                 order=order, profile_type=UserDefault.CUSTOMER
             )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="COUNTER OFFER SEND", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Send Counter Offer"}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="COUNTER OFFER RECEIVED", user=order.provider.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Received Counter Offer"}
+
+            handle_log_engine(
+                request=request, action="COUNTER OFFER SEND", status=LogStatus.SUCCESS, message="Send Counter Offer from Customer.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Received Counter Offer from Customer"
             )
             return Response(
                 {
@@ -166,26 +164,16 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="COUNTER OFFER SEND", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Send Counter Offer"}
+
+            handle_log_engine(
+                request=request, action="COUNTER OFFER SEND", status=LogStatus.FAILED, message="Failed to Send Counter Offer.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
                     'status': False,
                     'message': error,
                 },status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="COUNTER OFFER SEND", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Send Counter Offer", "error": str(e)}
-            )
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_400_BAD_REQUEST
             )
 
     def get_or_create_slot_exception(self, order, exception_type):
@@ -226,13 +214,11 @@ class CustomerOrderViewSet(UpdateModelViewSet):
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.FREEZED)
 
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="ACCEPT OFFER", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Accept the Custom Offer"}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="ACCEPT OFFER", user=order.provider.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Accept the Custom Offer"}
+            handle_log_engine(
+                request=request, action="ACCEPT OFFER", status=LogStatus.SUCCESS, message="Accept the Custom Offer.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Accept the Custom Offer by Customer"
             )
             return Response(
                 {
@@ -282,13 +268,16 @@ class CustomerOrderViewSet(UpdateModelViewSet):
 
                 self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
 
-                CreateLog(
-                    request=request, log_status=LogStatus.SUCCESS, action="PAYMENT COMPLETE", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                    entity=order, for_notify=True, metadata={"message": "Payment Complete & Order Confirm."}
+                handle_log_engine(
+                    request=request, action="PAYMENT COMPLETE", status=LogStatus.SUCCESS, message="Payment Complete & Order Confirm", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=self.request.user, send_to_type=UserDefault.CUSTOMER
                 )
-                CreateLog(
-                    request=request, log_status=LogStatus.SUCCESS, action="PAYMENT COMPLETE", user=order.provider.user, user_type=UserDefault.PROVIDER,
-                    entity=order, for_notify=True, metadata={"message": "Payment Complete & Order Confirm."}
+                handle_log_engine(
+                    request=request, action="PAYMENT COMPLETE", status=LogStatus.SUCCESS, message="Payment Complete & Order Confirm", entity=order,
+                    notify=True, logify=False,
+                    role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER
                 )
                 return Response(
                     {"status": True, "message": "Order pay and confirm!"},
@@ -296,26 +285,16 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="PAYMENT COMPLETE", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Payment Complete & Order Confirm."}
+            handle_log_engine(
+                request=request, action="PAYMENT COMPLETE", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
+
             return Response(
                 {
                     'status': False,
                     'message': error,
                 },status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="PAYMENT COMPLETE", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Payment Complete & Order Confirm.", "error": str(e)}
-            )
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_400_BAD_REQUEST
             )
 
     @action(detail=True, methods=["post"], url_path="propose-new-time")
@@ -334,14 +313,12 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             serializer.save(order=order, profile_type=UserDefault.CUSTOMER)
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
-
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="PROPOSE NEW TIME", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Send Propose New Time for Changes Time."}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="PROPOSE NEW TIME", user=order.provider.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Received Propose New Time for Changes Time."}
+            
+            handle_log_engine(
+                request=request, action="PROPOSE NEW TIME", status=LogStatus.SUCCESS, message="Send Propose New Time for Changes Time", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Received Propose New Time for Changes Time."
             )
             return Response(
                 {
@@ -391,13 +368,11 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 )
             order.save()
 
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="ORDER CANCELLATION REQUEST", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Send Cancel Request for Cancel This Order."}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="ORDER CANCELLATION REQUEST", user=order.provider.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Send Cancel Request for Cancel This Order."}
+            handle_log_engine(
+                request=request, action="ORDER CANCELLATION REQUEST", status=LogStatus.SUCCESS, message="Send Cancel Request for Cancel This Order", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER
             )
             return Response(
                 {
@@ -451,17 +426,23 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 )
                 HelperSlotException.objects.filter(order=order).update(is_active=False)
                 response_message = "Order Cancelled Confirm & Refund Processing!"
-                CreateLog(
-                    request=request, log_status=LogStatus.SUCCESS, action="CANCELLATION CONFIRM", user=order.provider.user, user_type=UserDefault.PROVIDER,
-                    entity=order, for_notify=True, metadata={"message": "Order Cencellation Request Confirm By Customer."}
+
+                handle_log_engine(
+                    request=request, action="CANCELLATION CONFIRM", status=LogStatus.SUCCESS, message="Order Cencellation Request Confirm By Customer.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Order Cencellation Request Confirm By Customer."
                 )
             elif action.upper() in [OrderChangesRequestStatus.DECLINED, "REJECT"]:
                 changes_request.status = OrderChangesRequestStatus.DECLINED
                 changes_request.save()
                 response_message = "Order Cancellation Declined!"
-                CreateLog(
-                    request=request, log_status=LogStatus.SUCCESS, action="CANCELLATION REJECTED", user=order.provider.user, user_type=UserDefault.PROVIDER,
-                    entity=order, for_notify=True, metadata={"message": "Order Cencellation Request Rejected By Customer."}
+
+                handle_log_engine(
+                    request=request, action="CANCELLATION REJECTED", status=LogStatus.SUCCESS, message="Order Cencellation Request Rejected By Customer.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Order Cencellation Request Rejected By Customer."
                 )
             return Response(
                 {
@@ -477,14 +458,12 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             serializer = ReviewAndRatingSerializer(data=request.data, context={"order": order, "send_by": UserDefault.CUSTOMER, "request": request})
             serializer.is_valid(raise_exception=True)
             serializer.save()
-
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="SEND FEEDBACK", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Send Feedback with this Order."}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="RECEIVED FEEDBACK", user=order.provider.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Received Feedback with this Order."}
+            
+            handle_log_engine(
+                request=request, action="SEND FEEDBACK", status=LogStatus.SUCCESS, message="Send Feedback with this Order.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Received Feedback with this Order."
             )
             return Response(
                 {
@@ -494,9 +473,9 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="SEND FEEDBACK", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Failed to Send Feedback with this Order."}
+            handle_log_engine(
+                request=request, action="SEND FEEDBACK", status=LogStatus.FAILED, message="Failed to Send Feedback with this Order.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -504,22 +483,11 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                     'message': error,
                 },status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="SEND FEEDBACK", user=self.request.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Failed to Send Feedback with this Order.", "error": str(e)}
-            )
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
 
     def create(self, request, *args, **kwargs):
-        CreateLog(
-            request=request, log_status=LogStatus.FAILED, action=f"{self.request.method} METHOD NOT ALLOWED", user=self.request.user, user_type=UserDefault.CUSTOMER,
-            for_notify=False, metadata={"message": f"{self.request.method} Method not allowed."}
+        handle_log_engine(
+            request=request, action="POST METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Post Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
         )
         return Response(
             {
@@ -529,9 +497,9 @@ class CustomerOrderViewSet(UpdateModelViewSet):
         )
     
     def update(self, request, *args, **kwargs):
-        CreateLog(
-            request=request, log_status=LogStatus.FAILED, action=f"{self.request.method} METHOD NOT ALLOWED", user=self.request.user, user_type=UserDefault.CUSTOMER,
-            for_notify=False, metadata={"message": f"{self.request.method} Method not allowed."}
+        handle_log_engine(
+            request=request, action="UPDATE METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Update Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
         )
         return Response(
             {
@@ -541,9 +509,9 @@ class CustomerOrderViewSet(UpdateModelViewSet):
         )
     
     def destroy(self, request, *args, **kwargs):
-        CreateLog(
-            request=request, log_status=LogStatus.FAILED, action=f"{self.request.method} METHOD NOT ALLOWED", user=self.request.user, user_type=UserDefault.CUSTOMER,
-            for_notify=False, metadata={"message": f"{self.request.method} Method not allowed."}
+        handle_log_engine(
+            request=request, action="DELETE METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Delete Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
         )
         return Response(
             {
@@ -573,13 +541,11 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 order=order, profile_type=UserDefault.PROVIDER
             )
 
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="COUNTER OFFER SEND", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Send Counter Offer"}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="COUNTER OFFER RECEIVED", user=order.customer.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Received Counter Offer"}
+            handle_log_engine(
+                request=request, action="COUNTER OFFER SEND", status=LogStatus.SUCCESS, message="Send Counter Offer from Provider.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Received Counter Offer from Provider"
             )
             return Response(
                 {
@@ -589,26 +555,15 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="COUNTER OFFER SEND", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Send Counter Offer"}
+            handle_log_engine(
+                request=request, action="COUNTER OFFER SEND", status=LogStatus.FAILED, message="Failed to Send Counter Offer.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
                     'status': False,
                     'message': error,
                 },status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="COUNTER OFFER SEND", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Send Counter Offer", "error": str(e)}
-            )
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_400_BAD_REQUEST
             )
     
     def get_or_create_slot_exception(self, order, exception_type):
@@ -641,8 +596,6 @@ class ProviderOrderViewSet(UpdateModelViewSet):
         order = self.get_object()
         if order.status != OrderStatus.PENDING:
             raise ValueError(f"Order already {order.status}.")
-        # elif order.status == OrderStatus.ACCEPT:
-        #     raise ValueError("Order already accept.")
         with transaction.atomic():
             order.status = OrderStatus.ACCEPT
             order.accepted_at = timezone.localtime(timezone.now())
@@ -650,13 +603,11 @@ class ProviderOrderViewSet(UpdateModelViewSet):
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.FREEZED)
 
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="ACCEPT OFFER", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Accept the Custom Offer"}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="ACCEPT OFFER", user=order.customer.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Accept the Custom Offer"}
+            handle_log_engine(
+                request=request, action="ACCEPT OFFER", status=LogStatus.SUCCESS, message="Accept the Custom Offer.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Accept the Custom Offer by Provider"
             )
             return Response(
                 {
@@ -676,13 +627,9 @@ class ProviderOrderViewSet(UpdateModelViewSet):
 
                 self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
 
-                CreateLog(
-                    request=request, log_status=LogStatus.SUCCESS, action="SET WORK HOUR", user=self.request.user, user_type=UserDefault.PROVIDER,
-                    entity=order, for_notify=True, metadata={"message": "Set Work Hour."}
-                )
-                CreateLog(
-                    request=request, log_status=LogStatus.SUCCESS, action="SET WORK HOUR", user=order.customer.user, user_type=UserDefault.CUSTOMER,
-                    entity=order, for_notify=True, metadata={"message": "Helper Set Work Hour."}
+                handle_log_engine(
+                    request=request, action="SET WORK HOUR", status=LogStatus.SUCCESS, message="Set Work Hour.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
                 )
                 return Response(
                     {
@@ -692,26 +639,15 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="SET WORK HOUR", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Set Work Hour."}
+            handle_log_engine(
+                request=request, action="SET WORK HOUR", status=LogStatus.FAILED, message="Failed to Set Work Hour.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
                     'status': False,
                     'message': error,
                 },status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="SET WORK HOUR", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Set Work Hour.", "error": str(e)}
-            )
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=True, methods=["post"], url_path="propose-new-time")
@@ -731,13 +667,11 @@ class ProviderOrderViewSet(UpdateModelViewSet):
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
 
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="PROPOSE NEW TIME", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Send Propose New Time for Changes Time."}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="PROPOSE NEW TIME", user=order.customer.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Received Propose New Time for Changes Time."}
+            handle_log_engine(
+                request=request, action="PROPOSE NEW TIME", status=LogStatus.SUCCESS, message="Send Propose New Time for Changes Time", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Received Propose New Time for Changes Time."
             )
             return Response(
                 {
@@ -787,13 +721,11 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 )
             order.save()
 
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="ORDER CANCELLATION REQUEST", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Send Cancel Request for Cancel This Order."}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="ORDER CANCELLATION REQUEST", user=order.customer.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Send Cancel Request for Cancel This Order."}
+            handle_log_engine(
+                request=request, action="ORDER CANCELLATION REQUEST", status=LogStatus.SUCCESS, message="Send Cancel Request for Cancel This Order", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -847,17 +779,23 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 )
                 HelperSlotException.objects.filter(order=order).update(is_active=False)
                 response_message = "Order Cancelled Confirm & Refund Processing!"
-                CreateLog(
-                    request=request, log_status=LogStatus.SUCCESS, action="CANCELLATION CONFIRM", user=order.customer.user, user_type=UserDefault.CUSTOMER,
-                    entity=order, for_notify=True, metadata={"message": "Order Cencellation Request Confirm By Provider."}
+
+                handle_log_engine(
+                    request=request, action="CANCELLATION CONFIRM", status=LogStatus.SUCCESS, message="Order Cencellation Request Confirm By Provider.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Order Cencellation Request Confirm By Provider."
                 )
             elif action.upper() in [OrderChangesRequestStatus.DECLINED, "REJECT"]:
                 changes_request.status = OrderChangesRequestStatus.DECLINED
                 changes_request.save()
                 response_message = "Order Cancellation Declined!"
-                CreateLog(
-                    request=request, log_status=LogStatus.SUCCESS, action="CANCELLATION REJECTED", user=order.customer.user, user_type=UserDefault.CUSTOMER,
-                    entity=order, for_notify=True, metadata={"message": "Order Cencellation Request Rejected By Provider."}
+
+                handle_log_engine(
+                    request=request, action="CANCELLATION REJECTED", status=LogStatus.SUCCESS, message="Order Cencellation Request Rejected By Provider.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Order Cencellation Request Rejected By Provider."
                 )
             return Response(
                 {
@@ -875,14 +813,12 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             serializer = StartWorkSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.work_start(order=order)
-
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="START WORK", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Start work to complete."}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="START WORK", user=order.customer.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Start work to complete."}
+            
+            handle_log_engine(
+                request=request, action="START WORK", status=LogStatus.SUCCESS, message="Start work to complete.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -892,26 +828,16 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="START WORK", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Start work to complete."}
+
+            handle_log_engine(
+                request=request, action="START WORK", status=LogStatus.FAILED, message="Failed to Start work to complete.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
                     'status': False,
                     'message': error,
                 },status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="START WORK", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Start work to complete.", "error": str(e)}
-            )
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_400_BAD_REQUEST
             )
 
     @action(detail=True, methods=["post"], url_path="complete")
@@ -927,13 +853,11 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             serializer.is_valid(raise_exception=True)
             serializer.complete(order=self.get_object())
 
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="COMPLETE ORDER", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Mark Complete the order."}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="COMPLETE ORDER", user=order.customer.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Mark Complete the order."}
+            handle_log_engine(
+                request=request, action="COMPLETE ORDER", status=LogStatus.SUCCESS, message="Mark Complete the order by OTP.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER
             )
             return Response(
                 {
@@ -943,26 +867,15 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="COMPLETE ORDER", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Mark Complete the order."}
+            handle_log_engine(
+                request=request, action="COMPLETE ORDER", status=LogStatus.FAILED, message="Failed to Mark Complete the order.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
                     'status': False,
                     'message': error,
                 },status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="COMPLETE ORDER", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Mark Complete the order.", "error": str(e)}
-            )
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_400_BAD_REQUEST
             )
 
     @action(detail=True, methods=["post"], url_path="give-feedback")
@@ -972,14 +885,11 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             serializer = ReviewAndRatingSerializer(data=request.data, context={"order": order, "send_by": UserDefault.PROVIDER, "request": request})
             serializer.is_valid(raise_exception=True)
             serializer.save()
-            
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="SEND FEEDBACK", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=True, metadata={"message": "Send Feedback with this Order."}
-            )
-            CreateLog(
-                request=request, log_status=LogStatus.SUCCESS, action="RECEIVED FEEDBACK", user=order.customer.user, user_type=UserDefault.CUSTOMER,
-                entity=order, for_notify=True, metadata={"message": "Received Feedback with this Order."}
+            handle_log_engine(
+                request=request, action="SEND FEEDBACK", status=LogStatus.SUCCESS, message="Send Feedback with this Order.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Received Feedback with this Order."
             )
             return Response(
                 {
@@ -989,9 +899,9 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="SEND FEEDBACK", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Send Feedback with this Order."}
+            handle_log_engine(
+                request=request, action="SEND FEEDBACK", status=LogStatus.FAILED, message="Failed to Send Feedback with this Order.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
             return Response(
                 {
@@ -999,22 +909,11 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                     'message': error,
                 },status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
-            CreateLog(
-                request=request, log_status=LogStatus.FAILED, action="SEND FEEDBACK", user=self.request.user, user_type=UserDefault.PROVIDER,
-                entity=order, for_notify=False, metadata={"message": "Failed to Send Feedback with this Order.", "error": str(e)}
-            )
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
 
     def create(self, request, *args, **kwargs):
-        CreateLog(
-            request=request, log_status=LogStatus.FAILED, action=f"{self.request.method} METHOD NOT ALLOWED", user=self.request.user, user_type=UserDefault.PROVIDER,
-            for_notify=False, metadata={"message": f"{self.request.method} Method not allowed."}
+        handle_log_engine(
+            request=request, action="POST METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Post Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
         )
         return Response(
             {
@@ -1024,9 +923,9 @@ class ProviderOrderViewSet(UpdateModelViewSet):
         )
 
     def update(self, request, *args, **kwargs):
-        CreateLog(
-            request=request, log_status=LogStatus.FAILED, action=f"{self.request.method} METHOD NOT ALLOWED", user=self.request.user, user_type=UserDefault.PROVIDER,
-            for_notify=False, metadata={"message": f"{self.request.method} Method not allowed."}
+        handle_log_engine(
+            request=request, action="UPDATE METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Update Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
         )
         return Response(
             {
@@ -1036,9 +935,9 @@ class ProviderOrderViewSet(UpdateModelViewSet):
         )
     
     def destroy(self, request, *args, **kwargs):
-        CreateLog(
-            request=request, log_status=LogStatus.FAILED, action=f"{self.request.method} METHOD NOT ALLOWED", user=self.request.user, user_type=UserDefault.PROVIDER,
-            for_notify=False, metadata={"message": f"{self.request.method} Method not allowed."}
+        handle_log_engine(
+            request=request, action="DELETE METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Delete Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
         )
         return Response(
             {
