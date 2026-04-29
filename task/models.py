@@ -164,8 +164,7 @@ class AdminWallet(models.Model):
 class PaymentTransaction(models.Model):
     # related object fields 
     user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
-    customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
-    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
+    profile = models.CharField(max_length=15, choices=UserDefault.choices, blank=True, null=True)
     order = models.ForeignKey(Order, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
 
     # payment and transaction fields

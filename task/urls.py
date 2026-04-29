@@ -23,8 +23,7 @@ router.register(r"order-refund", OrderRefundViewSets, basename="order-refund")
 
 urlpatterns = [
     path("", include(router.urls)),
-    # path("", include(router.urls)),
-
+    
     path("order-create/", CustomerOrderCreateViews.as_view(), name="order-create"),
     path("order/", include(order_router.urls)),
 ]

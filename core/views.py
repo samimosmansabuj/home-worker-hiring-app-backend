@@ -12,10 +12,11 @@ from task.models import AdminWallet
 from find_worker_config.permissions import IsAdminWritePermissionOnly
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAdminUser
-from .paginations import HelperPagination
+from .paginations import DefaultPagination
 from account.models import User, Address, ServiceProviderProfile
 from math import radians, cos, sin, asin, sqrt
 from .services.log_engine import handle_log_engine
+from django.db.models import Q
 
 
 # ----------------------------------------------------------
@@ -232,7 +233,7 @@ class CustomerScreenSlideViewset(UpdateModelViewSet):
 class HelperListViewset(UpdateReadOnlyModelViewSet):
     serializer_class = HelperSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = HelperPagination
+    pagination_class = DefaultPagination
 
     def get_serializer_context(self):
         return {"request": self.request}

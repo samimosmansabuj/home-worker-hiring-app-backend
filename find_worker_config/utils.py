@@ -150,8 +150,9 @@ class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
 
 
 class PaymentTransactionModule:
-    def __init__(self, user, amount, reference_object, type, action, payment_information: dict={}, reference=None, currency=None, service_charge: dict={}):
+    def __init__(self, user, amount, reference_object, type, action, payment_information: dict={}, reference=None, currency=None, profile=None, service_charge: dict={}):
         self.user = user
+        self.profile = profile
         self.amount = amount
         self.payment_information = payment_information
         self.reference_object = reference_object
@@ -210,6 +211,7 @@ class PaymentTransactionModule:
             payment_transaction = PaymentTransaction.objects.create(
                 user=self.user,
                 amount=self.amount,
+                profile=self.profile,
                 payment_information=self.payment_information or {},
                 entity_type=entity_type,
                 entity_id=self.reference_object.id,

@@ -1,4 +1,4 @@
-from account.models import HelperSlotException
+from account.models import HelperSlotException, Address, User
 from .serializers import ServiceCategorySerializer, ServiceSubCategorySerializer, ReviewAndRatingSerializer, PaymentTransactionSerializer, CompleteSerializer, CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, SetHourSerializer, OrderSerializerAll, StartWorkSerializer, ReviewAndRatingSerializer, OrderRefundRequestSerializer
 from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet
 from .models import ServiceCategory, ServiceSubCategory, Order, ReviewAndRating, PaymentTransaction, OrderRefundRequest, OrderChangesRequest
@@ -15,6 +15,8 @@ from django.utils import timezone
 from rest_framework.generics import CreateAPIView
 from core.services.log_engine import handle_log_engine
 from datetime import datetime, timedelta
+from core.paginations import DefaultPagination
+from math import radians, cos, sin, asin, sqrt
 
 # ============================================================
 # Category Views Section ===================
@@ -132,14 +134,123 @@ class CustomerOrderCreateViews(CreateAPIView):
 class CustomerOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializerAll
     permission_classes = [IsAuthenticated]
+    pagination_class = DefaultPagination
+
+    def haversine(self, lat2, lng2):
+        lng1, lat1, lng2, lat2 = map(
+            radians, [self.user_lng, self.user_lat, lng2, lat2]
+        )
+        dlon = lng2 - lng1
+        dlat = lat2 - lat1
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        c = 2 * asin(sqrt(a))
+        return round(6371 * c, 2)
+
+    def get_filter_data(self, queryset):
+        # ---- Query Params ----
+        q = self.request.query_params.get("q")
+        category_id = self.request.query_params.get("category_id")
+        distance_radius = self.request.query_params.get("distance_radius")
+        budget = self.request.query_params.get("budget")
+        working_date = self.request.query_params.get("working_date")
+        created_at = self.request.query_params.get("created_at")
+        status = self.request.query_params.get("status")
+
+        # ---- Search Filter ----
+        if q:
+            queryset = queryset.filter(
+                Q(company_name__icontains=q) |
+                Q(details__icontains=q)
+            )
+
+        # ---- Category Filter ----
+        if category_id:
+            queryset = queryset.filter(
+                category__id=category_id
+            )
+        
+        # ---- Budget ----
+        if budget:
+            queryset = queryset.filter(
+                hourly_rate__lte=float(budget)
+            )
+
+        # ---- Rating Filter ----
+        if working_date:
+            queryset = queryset.filter(
+                working_date=working_date
+            )
+        
+        # ---- Availability ----
+        if created_at:
+            queryset = queryset.filter(
+                created_at=created_at
+            )
+        
+        if status:
+            queryset = queryset.filter(
+                status=status
+            )
+
+        # ---- Distance Calculation (ALWAYS attach) ----
+        orders = []
+        for order in queryset:
+            order_lat = orders.lat
+            order_lng = orders.lng
+
+            if not order_lat or not order_lng:
+                continue
+            distance = self.haversine(order_lat, order_lng)
+            print("distance: ", distance)
+            # distance = self.get_map_distance(office.lat, office.lng)
+
+            # ---- Distance Radius Filter ----
+            if distance_radius:
+                if distance <= float(distance_radius):
+                    orders.append(order)
+            else:
+                orders.append(order)
+        return orders
 
     def get_serializer_context(self):
         return {"request": self.request, "profile_type": UserDefault.CUSTOMER}
 
     def get_queryset(self):
         user = self.request.user
+        address = Address.objects.filter(user=user, is_default=True).first()
+        if not address:
+            return User.objects.none()
+        self.user_lat = address.lat
+        self.user_lng = address.lng
+
+        user = self.request.user
         return Order.objects.filter(customer=user.customer_profile)
     
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.get_queryset()
+            orders = self.get_filter_data(queryset)
+            # sort_by = request.query_params.get("sort_by")
+            # helpers = self.get_sorting_queryset(helpers, sort_by)
+
+            page = self.paginate_queryset(orders)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(orders, many=True)
+            return Response({
+                "status": True,
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {
+                    'status': False,
+                    'messgae': str(e),
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=True, methods=["post"])
     def counter(self, request, *args, **kwargs):
         order = self.get_object()
@@ -254,6 +365,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 # Payment Transaction----
                 payment = PaymentTransactionModule(
                     user=request.user,
+                    profile=UserDefault.CUSTOMER,
                     amount=order.amount,
                     reference_object=order,
                     type=PaymentTransactionType.CREDIT,
@@ -523,6 +635,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
 class ProviderOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializerAll
     permission_classes = [IsAuthenticated]
+    pagination_class = DefaultPagination
 
     def get_serializer_context(self):
         return {"request": self.request, "profile_type": UserDefault.PROVIDER, "order": self.get_object() or None}
@@ -1004,6 +1117,9 @@ class PaymentTransactionViewSets(UpdateReadOnlyModelViewSet):
     serializer_class = PaymentTransactionSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_profile_type(self):
+        return self.request.headers.get("profile-type", None)
+
     def get_queryset(self):
         if self.request.user.role == UserRole.USER:
             pt = PaymentTransaction.objects.filter(
@@ -1011,6 +1127,10 @@ class PaymentTransactionViewSets(UpdateReadOnlyModelViewSet):
             ).filter(
                 Q(type=PaymentTransactionType.CREDIT) | Q(type=PaymentTransactionType.DEBIT)
             )
+            if self.get_profile_type() and self.get_profile_type().upper() in UserDefault.values:
+                pt.filter(
+                    profile=self.get_profile_type().upper()
+                )
         elif self.request.user.role == UserRole.ADMIN:
             pt = PaymentTransaction.objects.all()
         else:
