@@ -949,10 +949,10 @@ class ProviderEarningsTransactionsView(APIView):
             if not provider:
                 raise Exception("This user have no provider profile.")
             
-            transactions = PaymentTransaction.objects.filter(user=request.user, provider=provider, action=PaymentAction.SEND_PROVIDER).select_related(
-                "customer", "provider", "order"
+            transactions = PaymentTransaction.objects.filter(user=request.user, profile=UserDefault.PROVIDER, action=PaymentAction.SEND_PROVIDER).select_related(
+               "order"
             ).order_by("-created_at")
-
+            
             serializer = PaymentTransactionDetailSerializer(transactions, many=True, context={"request": request})
             grouped_data = self.get_grouped_data(serializer.data, transactions)
             return Response(

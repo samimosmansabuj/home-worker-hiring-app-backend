@@ -136,31 +136,36 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = DefaultPagination
 
-    def haversine(self, lat2, lng2):
-        lng1, lat1, lng2, lat2 = map(
-            radians, [self.user_lng, self.user_lat, lng2, lat2]
-        )
-        dlon = lng2 - lng1
-        dlat = lat2 - lat1
-        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-        c = 2 * asin(sqrt(a))
-        return round(6371 * c, 2)
-
     def get_filter_data(self, queryset):
         # ---- Query Params ----
+        status = self.request.query_params.get("status")
         q = self.request.query_params.get("q")
         category_id = self.request.query_params.get("category_id")
-        distance_radius = self.request.query_params.get("distance_radius")
         budget = self.request.query_params.get("budget")
+
         working_date = self.request.query_params.get("working_date")
         created_at = self.request.query_params.get("created_at")
-        status = self.request.query_params.get("status")
+
+        # ---- Budget ---- confirm/complete/cancel **Important and Only Workable
+        if status:
+            if status == "confirm":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]
+                )
+            elif status == "complete":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.COMPLETED, OrderStatus.IN_PROGRESS]
+                )
+            elif status == "cancel":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.CANCELLATION_REQUEST, OrderStatus.CANCELLED, OrderStatus.REFUND_REQUEST, OrderStatus.REFUND]
+                )
 
         # ---- Search Filter ----
         if q:
             queryset = queryset.filter(
-                Q(company_name__icontains=q) |
-                Q(details__icontains=q)
+                Q(title__icontains=q) |
+                Q(description__icontains=q)
             )
 
         # ---- Category Filter ----
@@ -172,66 +177,37 @@ class CustomerOrderViewSet(UpdateModelViewSet):
         # ---- Budget ----
         if budget:
             queryset = queryset.filter(
-                hourly_rate__lte=float(budget)
+                amount__lte=budget
             )
 
         # ---- Rating Filter ----
         if working_date:
-            queryset = queryset.filter(
-                working_date=working_date
-            )
+            queryset = queryset.filter(working_date=working_date)
         
         # ---- Availability ----
         if created_at:
-            queryset = queryset.filter(
-                created_at=created_at
-            )
+            try:
+                date_obj = datetime.strptime(created_at, "%Y-%m-%d")
+                next_day = date_obj + timedelta(days=1)
+                queryset = queryset.filter(
+                    created_at__gte=date_obj,
+                    created_at__lt=next_day
+                )
+            except ValueError:
+                pass
         
-        if status:
-            queryset = queryset.filter(
-                status=status
-            )
-
-        # ---- Distance Calculation (ALWAYS attach) ----
-        orders = []
-        for order in queryset:
-            order_lat = orders.lat
-            order_lng = orders.lng
-
-            if not order_lat or not order_lng:
-                continue
-            distance = self.haversine(order_lat, order_lng)
-            print("distance: ", distance)
-            # distance = self.get_map_distance(office.lat, office.lng)
-
-            # ---- Distance Radius Filter ----
-            if distance_radius:
-                if distance <= float(distance_radius):
-                    orders.append(order)
-            else:
-                orders.append(order)
-        return orders
+        return queryset
 
     def get_serializer_context(self):
         return {"request": self.request, "profile_type": UserDefault.CUSTOMER}
 
     def get_queryset(self):
-        user = self.request.user
-        address = Address.objects.filter(user=user, is_default=True).first()
-        if not address:
-            return User.objects.none()
-        self.user_lat = address.lat
-        self.user_lng = address.lng
-
-        user = self.request.user
-        return Order.objects.filter(customer=user.customer_profile)
+        return Order.objects.filter(customer=self.request.user.customer_profile).order_by("-created_at")
     
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
             orders = self.get_filter_data(queryset)
-            # sort_by = request.query_params.get("sort_by")
-            # helpers = self.get_sorting_queryset(helpers, sort_by)
 
             page = self.paginate_queryset(orders)
             if page is not None:
@@ -637,13 +613,98 @@ class ProviderOrderViewSet(UpdateModelViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = DefaultPagination
 
+    def get_filter_data(self, queryset):
+        # ---- Query Params ----
+        status = self.request.query_params.get("status")
+        q = self.request.query_params.get("q")
+        category_id = self.request.query_params.get("category_id")
+        budget = self.request.query_params.get("budget")
+
+        working_date = self.request.query_params.get("working_date")
+        created_at = self.request.query_params.get("created_at")
+
+        # ---- Budget ---- confirm/complete/cancel **Important and Only Workable
+        if status:
+            if status == "confirm":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]
+                )
+            elif status == "complete":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.COMPLETED, OrderStatus.IN_PROGRESS]
+                )
+            elif status == "cancel":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.CANCELLATION_REQUEST, OrderStatus.CANCELLED, OrderStatus.REFUND_REQUEST, OrderStatus.REFUND]
+                )
+
+        # ---- Search Filter ----
+        if q:
+            queryset = queryset.filter(
+                Q(title__icontains=q) |
+                Q(description__icontains=q)
+            )
+
+        # ---- Category Filter ----
+        if category_id:
+            queryset = queryset.filter(
+                category__id=category_id
+            )
+        
+        # ---- Budget ----
+        if budget:
+            queryset = queryset.filter(
+                amount__lte=budget
+            )
+
+        # ---- Rating Filter ----
+        if working_date:
+            queryset = queryset.filter(working_date=working_date)
+        
+        # ---- Availability ----
+        if created_at:
+            try:
+                date_obj = datetime.strptime(created_at, "%Y-%m-%d")
+                next_day = date_obj + timedelta(days=1)
+                queryset = queryset.filter(
+                    created_at__gte=date_obj,
+                    created_at__lt=next_day
+                )
+            except ValueError:
+                pass
+        
+        return queryset
+
     def get_serializer_context(self):
-        return {"request": self.request, "profile_type": UserDefault.PROVIDER, "order": self.get_object() or None}
+        return {"request": self.request, "profile_type": UserDefault.PROVIDER}
 
     def get_queryset(self):
         user = self.request.user
-        return Order.objects.filter(provider=user.service_provider_profile)
+        return Order.objects.filter(provider=user.service_provider_profile).order_by("-created_at")
     
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.get_queryset()
+            orders = self.get_filter_data(queryset)
+
+            page = self.paginate_queryset(orders)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(orders, many=True)
+            return Response({
+                "status": True,
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {
+                    'status': False,
+                    'messgae': str(e),
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=True, methods=["post"])
     def counter(self, request, *args, **kwargs):
         try:
