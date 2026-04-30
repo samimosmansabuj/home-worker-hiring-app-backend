@@ -9,12 +9,17 @@ from django.shortcuts import get_object_or_404
 from channels.exceptions import DenyConnection
 from find_worker_config.model_choice import SendMessageType
 from .serializers import ChatMessageSerializer
+from find_worker_config.model_choice import UserDefault
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         user = self.scope['user']
         self.roomId = self.scope['url_route']['kwargs']['roomId']
-        self.profileType = self.scope['url_route']['kwargs']['profileType']
+        self.profileType = self.scope['url_route']['kwargs']['profileType'].upper()
+
+        if self.profileType not in UserDefault.values:
+            await self.close()
+            return
         if not user.is_authenticated:
             raise DenyConnection("Unauthorized")
         if await self.verify_room_id(self.roomId) is False:
@@ -23,7 +28,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if  await self.check_user_and_room(user, self.profileType, self.roomId) is False:
             await self.close()
             return
-
         self.room_group_name = f'chat_{self.roomId}'
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
@@ -35,20 +39,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def receive(self, text_data):
         data = json.loads(text_data or {})
         message = (data.get("message") or "").strip()
-        msg_type = (data.get("type") or "text").strip()
 
-        if msg_type.startswith("image/"):
-            msg_type = SendMessageType.IMAGE
-        elif msg_type.startswith("video/"):
-            msg_type = SendMessageType.VIDEO
-        elif msg_type.startswith("audio/"):
-            msg_type = SendMessageType.AUDIO
-        elif msg_type.startswith("application/"):
-            msg_type = SendMessageType.FILE
-        else:
-            msg_type = SendMessageType.TEXT
-        
-        if msg_type == "delete":
+        type_map = {
+            "text": SendMessageType.TEXT,
+            "image": SendMessageType.IMAGE,
+            "video": SendMessageType.VIDEO,
+            "audio": SendMessageType.AUDIO,
+            "file": SendMessageType.FILE,
+            "offer": SendMessageType.OFFER,
+            "delete": "delete"
+        }
+        message_type = type_map.get((data.get("type") or "text").lower().strip(), SendMessageType.TEXT)
+
+        if message_type == "delete":
             message_id = data.get("message_id")
             room_Id = data.get("roomId")
             if not message_id and not room_Id:
@@ -59,10 +62,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 return
             payload = {
                 'type': 'chat_message',
-                'msg_type': "delete",
+                'message_type': "delete",
                 'message_id': message_id
             }
-        elif msg_type in ("image", "video", "audio", "file"):
+        elif message_type in [SendMessageType.IMAGE, SendMessageType.VIDEO, SendMessageType.AUDIO, SendMessageType.FILE]:
             # {url, mime, name, size}
             attachment_size = data.get("attachment_size")
             attachment_name = data.get("attachment_name", "uploaded_image.png")
@@ -72,11 +75,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 header, base64_data = raw_file.split(',', 1)
                 file = ContentFile(base64.b64decode(base64_data), name=attachment_name)
             
-            ok = await self.save_message_with_attachment(message, file, attachment_size, msg_type)
+            ok = await self.save_message_with_attachment(message, file, attachment_size, message_type)
             
             payload = {
                 'type': 'chat_message',
-                'msg_type': msg_type,
+                'message_type': message_type,
                 'message': message,
                 'message_id': ok["message_id"],
                 'attachment': {
@@ -89,20 +92,30 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'sender_id': ok["id"],
                 'sender_profile': self._abs_url(ok["profile"]),
             }
-        else:
+        elif message_type == SendMessageType.TEXT:
             if not message:
                 return
-            ok = await self.save_message(message)
+            ok = await self.save_message(message, message_type)
             if not ok:
                 return
+            user = ok.get("user")
+            photo = ok.get("photo")
+            message = ok.get("message")
             payload = {
-                'type': 'chat_message',
-                'msg_type': msg_type,
-                'message': message,
-                'message_id': ok["message_id"],
-                'sender': ok["username"],
-                'sender_id': ok["id"],
-                'sender_profile': self._abs_url(ok["profile"]),
+                "type": 'chat_message',
+                "id": message.id,
+                "sender": message.sender,
+                "message_type": message.message_type,
+                "content": message.content,
+                "timestamp": message.timestamp.isoformat(),
+                "is_read": message.is_read,
+                "attachments": [],
+                'sender_data': {
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "photo": photo,
+                    "user": user.role,
+                },
             }
         
         await self.channel_layer.group_send(
@@ -160,29 +173,30 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return {'id': user.id, 'username': user.username, 'profile': profile_url, "url": att.file.url, "mime": att.mime, "name": att.name, "size": att.size, 'message_id': msg.pk}
     
     @database_sync_to_async
-    def save_message(self, message):
+    def save_message(self, message, message_type):
         user = self.scope['user']
         try:
             room = ChatRoom.objects.get(uuid=self.roomId)
         except ObjectDoesNotExist:
             return False
         
-        message = ChatMessage.objects.create(sender=user, room=room, content=message)
+        message = ChatMessage.objects.create(sender=self.profileType, room=room, content=message, message_type=message_type)
         
-        profile_url = ''
-        client_user = getattr(user, 'client_user', None)
-        pic = getattr(client_user, 'profile_picture', None) if client_user else None
+        photo = ''
+        pic = getattr(user, 'photo', None) if user else None
         if pic:
             try:
-                profile_url = pic.url
+                photo = pic.url
             except Exception:
-                profile_url = ''
+                photo = ''
 
-        return {'id': user.id, 'username': user.username, 'profile': profile_url, 'message_id': message.pk}
+        return {'user': user, 'photo': photo, 'message': message}
     
+    
+
     @database_sync_to_async
     def verify_room_id(self, room_uuid):
-        status = True if ChatRoom.objects.filter(uuid=room_uuid).exists() else False
+        status = ChatRoom.objects.filter(uuid=room_uuid).exists()
         return status
     
     @database_sync_to_async

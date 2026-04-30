@@ -7,9 +7,12 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from account.utils import image_delete_os, previous_image_delete_os
 from task.models import Order, OrderChangesRequest
+import os
+import mimetypes
 
 class ChatRoom(models.Model):
     uuid = models.CharField(max_length=255, blank=True, null=True)
+    # uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name="chat_customer")
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="chat_provider")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -23,22 +26,21 @@ class ChatRoom(models.Model):
         unique_together = ('customer', 'provider')
     
     def __str__(self):
-        return f"ChatRoom: {self.customer.username} & {self.provider.username}"
+        return f"ChatRoom: {self.customer.user.username} & {self.provider.user.username}"
 
 class ChatMessage(models.Model):
     room = models.ForeignKey(ChatRoom, on_delete=models.CASCADE, related_name='messages')
-    # sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="messages")
     sender = models.CharField(max_length=20, choices=UserDefault.choices)
-    type = models.CharField(max_length=16, choices=SendMessageType, default=SendMessageType.TEXT)
+    message_type = models.CharField(max_length=16, choices=SendMessageType, default=SendMessageType.TEXT)
     content = models.TextField(blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
     is_read = models.BooleanField(default=False)
     
     class Meta:
-        ordering = ["timestamp"]
+        ordering = ["-timestamp"]
     
     def __str__(self):
-        return f"{self.sender.email}: {self.content[:20]}"
+        return f"{self.sender}: {self.content[:20]}"
 
 class CustomOffer(models.Model):
     message = models.OneToOneField(ChatMessage, on_delete=models.CASCADE, related_name="custom_offers")
@@ -62,9 +64,20 @@ class Attachment(models.Model):
         return super().delete(*args, **kwargs)
     
     def save(self, *args, **kwargs):
+        # if self.file and not self.pk:
+        #     self.name = os.path.basename(self.file.name)
+        #     try:
+        #         self.size = self.file.size
+        #     except Exception:
+        #         self.size = 0
+        #     mime, _ = mimetypes.guess_type(self.file.name)
+        #     self.mime = mime or ""
+        
         if self.pk and Attachment.objects.filter(pk=self.pk).exists():
             instance = Attachment.objects.get(pk=self.pk)
             self.image_update(instance)
+        super().save(*args, **kwargs)
+
 
 
 class Notification(models.Model):
