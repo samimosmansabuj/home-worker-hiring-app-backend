@@ -45,7 +45,7 @@ class ChatMessage(models.Model):
 class CustomOffer(models.Model):
     message = models.OneToOneField(ChatMessage, on_delete=models.CASCADE, related_name="custom_offers")
     order_object = models.ForeignKey(Order, on_delete=models.SET_NULL, blank=True, null=True)
-    reference_object = models.ForeignKey(OrderChangesRequest, on_delete=models.SET_NULL, blank=True, null=True)
+    changes_object = models.ForeignKey(OrderChangesRequest, on_delete=models.SET_NULL, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

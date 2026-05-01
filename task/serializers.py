@@ -93,6 +93,9 @@ class CounterSerializer(serializers.Serializer):
     budget = serializers.DecimalField(max_digits=9, decimal_places=2)
     message = serializers.CharField(required=False)
 
+    def get_changes_object(self):
+        return self.changes_object
+
     def save(self, **kwargs):
         budget = self.validated_data.get("budget")
         message = self.validated_data.get("message")
@@ -103,7 +106,7 @@ class CounterSerializer(serializers.Serializer):
         elif OrderChangesRequest.objects.filter(order=order, request_by=profile_type, changes_type=ChangesRequestType.COUNTER).exists():
             raise ValueError("Only One counter each side!")
         with transaction.atomic():
-            OrderChangesRequest.objects.create(
+            changes_object = OrderChangesRequest.objects.create(
                 order=order,
                 status=OrderChangesRequestStatus.ACCEPT,
                 request_by=profile_type,
@@ -115,6 +118,7 @@ class CounterSerializer(serializers.Serializer):
             )
             order.amount = budget
             order.save()
+            self.changes_object = changes_object
             return order
 
 class SetHourSerializer(serializers.Serializer):
@@ -187,6 +191,9 @@ class SetHourSerializer(serializers.Serializer):
             slot_exception.save()
         return attrs
 
+    def get_changes_object(self):
+        return self.changes_object
+
     def save(self, **kwargs):
         available_status = [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]
         hour = self.validated_data.get("set_hour")
@@ -196,7 +203,7 @@ class SetHourSerializer(serializers.Serializer):
             raise ValueError(f"Set Hour not accept when order is {order.status}")
         
         with transaction.atomic():
-            OrderChangesRequest.objects.create(
+            changes_object = OrderChangesRequest.objects.create(
                 order=order,
                 status=OrderChangesRequestStatus.ACCEPT,
                 request_by=UserDefault.PROVIDER,
@@ -206,6 +213,7 @@ class SetHourSerializer(serializers.Serializer):
                     "message": message
                 }
             )
+            self.changes_object = changes_object
             order.working_hour = hour
             order.save(update_fields=["working_hour"])
             return order
@@ -288,6 +296,9 @@ class ProposeNewTimeSerializer(serializers.Serializer):
         response_message = "Request sent successfully"
         return data, response_message
 
+    def get_changes_object(self):
+        return self.changes_object
+
     def save(self, **kwargs):
         order = kwargs.get("order")
         profile_type = kwargs.get("profile_type")
@@ -305,7 +316,9 @@ class ProposeNewTimeSerializer(serializers.Serializer):
 
         with transaction.atomic():
             self.response_message = response_message
-            return OrderChangesRequest.objects.create(**data)
+            changes_object = OrderChangesRequest.objects.create(**data)
+            self.changes_object = changes_object
+            return changes_object
     
     def get_response_message(self):
         return self.response_message
@@ -373,11 +386,15 @@ class ProposeNewTimeActionSerializer(serializers.Serializer):
         order.save()
         return order
     
+    def get_changes_object(self):
+        return self.changes_request
+
     def save(self, **kwargs):
         order = kwargs.get("order")
         request_id = self.validated_data.get("request_id", None)
         profile_type = kwargs.get("profile_type")
         changes_request = OrderChangesRequest.objects.get(id=request_id, order=order)
+        self.changes_request = changes_request
         status = self.validated_data.get("status", None)
         if changes_request.request_by == profile_type:
             raise ValueError("You can't action your request.")

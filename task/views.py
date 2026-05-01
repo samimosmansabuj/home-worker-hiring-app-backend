@@ -54,6 +54,11 @@ class ServiceSubCategoryViewSet(UpdateModelViewSet):
 # ========Order Views Section===================
 
 # -----------Custom Offer Order Start-------------
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+from chat_notify.models import ChatRoom, ChatMessage, CustomOffer
+from find_worker_config.model_choice import SendMessageType
+from chat_notify.serializers import MessageCustomOfferSerializer
 class CustomerOrderCreateViews(CreateAPIView):
     serializer_class = OrderSerializerAll
     permission_classes = [IsAuthenticated]
@@ -64,12 +69,56 @@ class CustomerOrderCreateViews(CreateAPIView):
         except ValueError:
             raise ValidationError("Invalid time format. Expected format like '09:00 AM'")
     
+    def send_message(self, instance):
+        channel_layer = get_channel_layer()
+        print("instance.customer: ", instance.customer)
+        print("instance.provider: ", instance.provider)
+        room = ChatRoom.objects.get(
+            customer=instance.customer,
+            provider=instance.provider
+        )
+
+
+        msg = ChatMessage.objects.create(
+            room=room,
+            sender=UserDefault.CUSTOMER,
+            message_type=SendMessageType.OFFER,
+            content=f"Custom offer: {instance.title}"
+        )
+
+        custom_offer = CustomOffer.objects.create(
+            message=msg,
+            order_object=instance
+        )
+
+        async_to_sync(channel_layer.group_send)(
+            f"chat_{room.uuid}",
+            {
+                "type": "chat_message",
+                "id": msg.id,
+                "sender": msg.sender,
+                "message_type": msg.message_type,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+                "is_read": msg.is_read,
+                "attachments": [],
+                "offer_data": MessageCustomOfferSerializer(custom_offer).data,
+                "sender_data": {
+                    "first_name": instance.customer.user.first_name,
+                    "last_name": instance.customer.user.last_name,
+                    "photo": getattr(instance.customer.user, "photo", "").url if getattr(instance.customer.user, "photo", None) else None,
+                    "user": UserDefault.CUSTOMER,
+                }
+            }
+        )
+
     def create(self, request, *args, **kwargs):
         try:
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             self.perform_create(serializer)
             instance = serializer.instance
+            self.send_message(instance)
 
             handle_log_engine(
                 request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Custom Offer Created by Customer", entity=instance,
@@ -115,18 +164,6 @@ class CustomerOrderCreateViews(CreateAPIView):
                     'message': str(e),
                 }, status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
-            handle_log_engine(
-                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.FAILED, message=str(e),
-                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
-                notify=False, logify=True,
-            )
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
 
 # -----------Custom Offer Order End-------------
 
@@ -135,6 +172,46 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializerAll
     permission_classes = [IsAuthenticated]
     pagination_class = DefaultPagination
+
+    def send_message(self, order, changes_object=None):
+        user = order.customer.user
+        channel_layer = get_channel_layer()
+        room = ChatRoom.objects.get(
+            customer=order.customer,
+            provider=order.provider
+        )
+        msg = ChatMessage.objects.create(
+            room=room,
+            sender=UserDefault.CUSTOMER,
+            message_type=SendMessageType.OFFER,
+            content=f"Custom offer: {order.title}"
+        )
+        custom_offer = CustomOffer.objects.create(
+            message=msg,
+            order_object=order,
+            changes_object=changes_object
+        )
+        
+        async_to_sync(channel_layer.group_send)(
+            f"chat_{room.uuid}",
+            {
+                "type": "chat_message",
+                "id": msg.id,
+                "sender": msg.sender,
+                "message_type": msg.message_type,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+                "is_read": msg.is_read,
+                "attachments": [],
+                "offer_data": MessageCustomOfferSerializer(custom_offer).data,
+                "sender_data": {
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "photo": getattr(user, "photo", "").url if getattr(user, "photo", None) else None,
+                    "user": UserDefault.CUSTOMER,
+                }
+            }
+        )
 
     def get_filter_data(self, queryset):
         # ---- Query Params ----
@@ -237,6 +314,8 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 order=order, profile_type=UserDefault.CUSTOMER
             )
 
+            self.send_message(order=order, changes_object=serializer.get_changes_object())
+
             handle_log_engine(
                 request=request, action="COUNTER OFFER SEND", status=LogStatus.SUCCESS, message="Send Counter Offer from Customer.", entity=order,
                 perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
@@ -300,6 +379,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             order.save()
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.FREEZED)
+            self.send_message(order=order)
 
             handle_log_engine(
                 request=request, action="ACCEPT OFFER", status=LogStatus.SUCCESS, message="Accept the Custom Offer.", entity=order,
@@ -355,6 +435,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 order.save(update_fields=["status", "payment_status"])
 
                 self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+                self.send_message(order=order)
 
                 handle_log_engine(
                     request=request, action="PAYMENT COMPLETE", status=LogStatus.SUCCESS, message="Payment Complete & Order Confirm", entity=order,
@@ -401,6 +482,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             serializer.save(order=order, profile_type=UserDefault.CUSTOMER)
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+            self.send_message(order=order, changes_object=serializer.get_changes_object())
             
             handle_log_engine(
                 request=request, action="PROPOSE NEW TIME", status=LogStatus.SUCCESS, message="Send Propose New Time for Changes Time", entity=order,
@@ -613,6 +695,48 @@ class ProviderOrderViewSet(UpdateModelViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = DefaultPagination
 
+    def send_message(self, order, changes_object=None):
+        print("changes_object: ", changes_object)
+        user = order.provider.user
+        channel_layer = get_channel_layer()
+        room = ChatRoom.objects.get(
+            customer=order.customer,
+            provider=order.provider
+        )
+        msg = ChatMessage.objects.create(
+            room=room,
+            sender=UserDefault.PROVIDER,
+            message_type=SendMessageType.OFFER,
+            content=f"Custom offer: {order.title}"
+        )
+        custom_offer = CustomOffer.objects.create(
+            message=msg,
+            order_object=order,
+            changes_object=changes_object
+        )
+        
+        async_to_sync(channel_layer.group_send)(
+            f"chat_{room.uuid}",
+            {
+                "type": "chat_message",
+                "id": msg.id,
+                "sender": msg.sender,
+                "message_type": msg.message_type,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+                "is_read": msg.is_read,
+                "attachments": [],
+                "offer_data": MessageCustomOfferSerializer(custom_offer).data,
+                "sender_data": {
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "photo": getattr(user, "photo", "").url if getattr(user, "photo", None) else None,
+                    "user": UserDefault.PROVIDER,
+                }
+            }
+        )
+
+
     def get_filter_data(self, queryset):
         # ---- Query Params ----
         status = self.request.query_params.get("status")
@@ -715,6 +839,8 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 order=order, profile_type=UserDefault.PROVIDER
             )
 
+            self.send_message(order=order, changes_object=serializer.get_changes_object())
+
             handle_log_engine(
                 request=request, action="COUNTER OFFER SEND", status=LogStatus.SUCCESS, message="Send Counter Offer from Provider.", entity=order,
                 perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
@@ -777,6 +903,8 @@ class ProviderOrderViewSet(UpdateModelViewSet):
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.FREEZED)
 
+            self.send_message(order=order)
+
             handle_log_engine(
                 request=request, action="ACCEPT OFFER", status=LogStatus.SUCCESS, message="Accept the Custom Offer.", entity=order,
                 perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
@@ -800,6 +928,7 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 serializer.save(order=order)
 
                 self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+                self.send_message(order=order, changes_object=serializer.get_changes_object())
 
                 handle_log_engine(
                     request=request, action="SET WORK HOUR", status=LogStatus.SUCCESS, message="Set Work Hour.", entity=order,
@@ -840,6 +969,7 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             serializer.save(order=order, profile_type=UserDefault.PROVIDER)
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+            self.send_message(order=order, changes_object=serializer.get_changes_object())
 
             handle_log_engine(
                 request=request, action="PROPOSE NEW TIME", status=LogStatus.SUCCESS, message="Send Propose New Time for Changes Time", entity=order,
