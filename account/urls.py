@@ -1,6 +1,6 @@
 from django.urls import path, include
 from .views import (
-    PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView, HelperListViewset, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView, ProviderAddressUpdateView
+    PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView, HelperListViewset, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView, ProviderAddressUpdateView, AdminAuthViews
 )
 from rest_framework.routers import DefaultRouter
 
@@ -15,6 +15,7 @@ router.register(r"my-vouchers", MyVoucherViewSet, basename="my-vouchers")
 
 
 urlpatterns = [
+    path("admin/token/auth/", AdminAuthViews.as_view(), name="admin-login"),
     # Auth Route For All User--------------
     path("token/auth/", PasswordLoginViews.as_view(), name="user_login"),
     path("token/otp/request/", LoginOTPRequestView.as_view(), name="login_otp_send"),

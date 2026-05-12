@@ -34,6 +34,16 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def get_user(self):
         return self.user
 
+class AdminLoginSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+
+        if self.user.role != UserRole.ADMIN:
+            raise serializers.ValidationError(
+                {"detail": "You are not authorized as admin."}
+            )
+        return data
+
 class LoginOTPRequestSerializer(serializers.Serializer):
     phone = serializers.CharField(required=False, allow_blank=True)
     email = serializers.EmailField(required=False, allow_blank=True)
@@ -89,6 +99,8 @@ class LoginOTPVerifySerializer(serializers.Serializer):
             "refresh": str(refresh),
             "default_profile": user.default_profile
         }
+
+
 # Login With OTP End===========================
 # =================================================================
 

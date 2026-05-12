@@ -13,7 +13,7 @@ from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 from .models import OTP, User, Address, CustomerProfile, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher
 from .serializers import (
-    LoginOTPRequestSerializer, LoginOTPVerifySerializer, ProviderSerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer
+    LoginOTPRequestSerializer, LoginOTPVerifySerializer, ProviderSerializer, SignUpOTPRequestSerializer, SignUpOTPVerifySerializer, UserInfoSerializer, UserAddressSerializer, SignupSerializer, ChangePasswordSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, CustomTokenObtainPairSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, AdminLoginSerializer
 )
 from core.models import AddOfferVoucher
 from .utils import generate_otp, KYCVerificationService
@@ -184,6 +184,36 @@ class LoginOTPVerifyView(APIView):
                     "message": str(e)
                 }, status=status.HTTP_400_BAD_REQUEST
             )
+
+class AdminAuthViews(TokenObtainPairView):
+    serializer_class = AdminLoginSerializer
+    
+    def post(self, request: Request, *args, **kwargs):
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            return Response(
+                {
+                    "status": True,
+                    "data": serializer.validated_data
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {kay: str(value[0]) for kay, value in serializer.errors.items()}
+            return Response(
+                {
+                    "status": False,
+                    "message": error
+                }
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
 # Login With OTP End===========================
 
 # SignUp With OTP Start===========================
@@ -541,7 +571,6 @@ class AppleLoginAPIView(APIView):
                     "message": str(e)
                 }
             )
-
 
 # Social Auth Login System Views END---------------
 # =================================================================
