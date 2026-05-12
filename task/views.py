@@ -1,39 +1,37 @@
-from django.shortcuts import render, get_object_or_404
-from .serializers import ServiceCategorySerializer, ServiceSubCategorySerializer, OrderSerializer, OrderRequestSerializer, OrderRequestSerializerForOrder, ReviewAndRatingSerializer, PaymentTransactionSerializer, OrderRefundRequestSerializer, OrderRefundRequestActionSerializer
-from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet, LogActivityModule
-from .models import ServiceCategory, ServiceSubCategory, Order, OrderRequest, ReviewAndRating, PaymentTransaction, OrderRefundRequest
+from account.models import HelperSlotException, Address, User
+from .serializers import ServiceCategorySerializer, ServiceSubCategorySerializer, ReviewAndRatingSerializer, PaymentTransactionSerializer, CompleteSerializer, CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, SetHourSerializer, OrderSerializerAll, StartWorkSerializer, ReviewAndRatingSerializer, OrderRefundRequestSerializer
+from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet
+from .models import ServiceCategory, ServiceSubCategory, Order, ReviewAndRating, PaymentTransaction, OrderRefundRequest, OrderChangesRequest
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework import status, viewsets
+from rest_framework import status
 from rest_framework.exceptions import ValidationError, PermissionDenied
-from find_worker_config.permissions import ForProviderProfile, IsAdminWritePermissionOnly, HasCustomerProfileSafeModeTypeHeader, ForCustomerProfile, ForAdminProfile
-from chat_notify.utils import push_notify_all, push_notify_role, push_notification
-from find_worker_config.model_choice import UserRole, OrderStatus, UserDefault, OrderRequestStatus, OrderPaymentStatus, PaymentTransactionType, PaymentAction, RefundStatus
-from django.db.models import Q
-from rest_framework import views
-from .services import OrderService
+from rest_framework.permissions import IsAuthenticated
+from find_worker_config.permissions import IsAdminWritePermissionOnly, ForCustomerProfile, ForAdminProfile
+from find_worker_config.model_choice import UserRole, OrderStatus, OrderPaymentStatus, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault, LogStatus, HelperSlotExceptionType, OrderChangesRequestStatus, ChangesRequestType
 from django.db import transaction
-from django.contrib.contenttypes.models import ContentType
-from account.utils import generate_otp
-from account.models import ServiceProviderProfile
 from django.db.models import Q
 from django.utils import timezone
+from rest_framework.generics import CreateAPIView
+from core.services.log_engine import handle_log_engine
+from datetime import datetime, timedelta
+from core.paginations import DefaultPagination
+from math import radians, cos, sin, asin, sqrt
 
+# ============================================================
+# Category Views Section ===================
 class ServiceCategoryViewSet(UpdateModelViewSet):
     queryset = ServiceCategory.objects.all()
     serializer_class = ServiceCategorySerializer
     permission_classes = [IsAdminWritePermissionOnly]
 
     def perform_update(self, serializer):
-        push_notify_role(
-            role=UserRole.ADMIN,
-            data={
-                "type": "CATEGORY_UPDATE",
-                "message": "Category Updated!"
-            }
+        instance = serializer.save()
+        handle_log_engine(
+            request=self.request, action="CREATE CATEGORY", status=LogStatus.SUCCESS, message="Create a New Category.", entity=instance,
+            perform_user=self.request.user
         )
-        return super().perform_update(serializer)
+        return instance
 
 class ServiceSubCategoryViewSet(UpdateModelViewSet):
     queryset = ServiceSubCategory.objects.all()
@@ -41,261 +39,365 @@ class ServiceSubCategoryViewSet(UpdateModelViewSet):
     permission_classes = [IsAdminWritePermissionOnly]
 
     def perform_update(self, serializer):
-        push_notify_role(
-            role=UserRole.ADMIN,
-            data={
-                "type": "CATEGORY_UPDATE",
-                "message": "Sub Category Updated!"
-            }
-        )
-        return super().perform_update(serializer)
-
-
-
-class OrderRequestViewSets(UpdateModelViewSet):
-    queryset = OrderRequest.objects.all()
-    permission_classes = [IsAuthenticated]
-    serializer_class = OrderRequestSerializer
-
-class ReviewAndRatingViewSets(UpdateModelViewSet):
-    queryset = ReviewAndRating.objects.all()
-    serializer_class = ReviewAndRatingSerializer
-    permission_classes = [HasCustomerProfileSafeModeTypeHeader]
-
-    def get_queryset(self):
-        profile_type = self.request.headers.get("profile-type", "").upper()
-        action = self.request.query_params.get("action")
-        provider_profile_id = self.request.query_params.get("provider_profile_id")
-
-        if action == "view" and profile_type == UserDefault.CUSTOMER:
-            if not provider_profile_id:
-                raise Exception("Profile id is missing.")
-            provider = get_object_or_404(ServiceProviderProfile, pk=int(provider_profile_id))
-            return ReviewAndRating.objects.filter(provider=provider)
-        else:
-            if profile_type == UserRole.ADMIN:
-                if not provider_profile_id:
-                    raise Exception("Profile id is missing.")
-                # provider = get_object_or_404(ServiceProviderProfile, pk=int(provider_profile_id))
-                return ReviewAndRating.objects.filter(provider__id=int(provider_profile_id))
-            elif profile_type == UserDefault.CUSTOMER:
-                return ReviewAndRating.objects.filter(customer=self.request.user.hasCustomerProfile)
-            elif profile_type == UserDefault.PROVIDER:
-                return ReviewAndRating.objects.filter(provider=self.request.user.hasServiceProviderProfile)
-
-    def get_user(self):
-        profile_type = self.request.headers.get("profile-type", "")
-        return self.request.user
-
-
-# Order Section For Customer----------------------------------------------------------
-class CustomerOrderViewSet(UpdateModelViewSet):
-    serializer_class = OrderSerializer
-    permission_classes = [ForCustomerProfile]
-
-    def get_queryset(self):
-        return Order.objects.filter(
-            customer=self.request.user.hasCustomerProfile
-        ).prefetch_related("order_requests")
-
-    def create_log(self, action, entity=None, for_notify=False, user=None, metadata={}):
-        data = {
-            "user": user or self.request.user,
-            "action": action,
-            "entity": entity,
-            "request": self.request,
-            "for_notify": for_notify,
-            "metadata": metadata,
-        }
-        log = LogActivityModule(data)
-        log.create()
-
-    def perform_create(self, serializer):
-        with transaction.atomic():
-            instance = serializer.save()
-            self.create_log("Create New Order", instance, for_notify=True)
-            return instance
-    
-    def perform_update(self, serializer):
         instance = serializer.save()
-        self.create_log("Update Order", instance, for_notify=False)
+        handle_log_engine(
+            request=self.request, action="CREATE SUB-CATEGORY", status=LogStatus.SUCCESS, message="Create a New Sub-Category.", entity=instance,
+            perform_user=self.request.user
+        )
         return instance
 
-    @action(detail=False, methods=["post"], url_path="custom")
-    def create_with_provider(self, request):
+# Category Views Section ===================
+# ============================================================
+
+
+# ============================================================
+# ========Order Views Section===================
+
+# -----------Custom Offer Order Start-------------
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+from chat_notify.models import ChatRoom, ChatMessage, CustomOffer
+from find_worker_config.model_choice import SendMessageType
+from chat_notify.serializers import MessageCustomOfferSerializer
+class CustomerOrderCreateViews(CreateAPIView):
+    serializer_class = OrderSerializerAll
+    permission_classes = [IsAuthenticated]
+
+    def convert_to_24h(self, time_str):
         try:
-            with transaction.atomic():
-                provider_id = request.data.get("provider_id")
-                amount = request.data.get("amount")
-                if not provider_id:
-                    return Response(
-                        {"status": False, "message": "Provider ID is required"},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                provider = ServiceProviderProfile.objects.get(id=provider_id)
-                if provider.user == request.user:
-                    return Response(
-                        {"status": False, "message": "You cannot assign yourself"},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+            return datetime.strptime(time_str, "%I:%M %p").time()
+        except ValueError:
+            raise ValidationError("Invalid time format. Expected format like '09:00 AM'")
+    
+    def send_message(self, instance):
+        channel_layer = get_channel_layer()
+        print("instance.customer: ", instance.customer)
+        print("instance.provider: ", instance.provider)
+        room = ChatRoom.objects.get(
+            customer=instance.customer,
+            provider=instance.provider
+        )
 
-                serializer = self.get_serializer(data=request.data)
-                serializer.is_valid(raise_exception=True)
-                order = serializer.save(customer=request.user.hasCustomerProfile)
 
-                # Assign provider directly
-                order.provider = provider
-                order.status = OrderStatus.ACCEPT
-                order.save(update_fields=["provider", "status"])
+        msg = ChatMessage.objects.create(
+            room=room,
+            sender=UserDefault.CUSTOMER,
+            message_type=SendMessageType.OFFER,
+            content=f"Custom offer: {instance.title}"
+        )
 
-                # Create accepted request
-                order_request = OrderRequest.objects.create(
-                    order=order,
-                    provider=provider,
-                    status=OrderRequestStatus.ACCEPTED,
-                    budget=amount
-                )
+        custom_offer = CustomOffer.objects.create(
+            message=msg,
+            order_object=instance
+        )
 
-                # Logging
-                self.create_log(
-                    "Direct Order Created",
-                    entity=order,
-                    for_notify=True,
-                    user=provider.user,
-                    metadata={
-                        "reference_user_id": request.user.id,
-                        "reference_object_id": order_request.id,
-                        "reference_object_type": "OrderRequest"
-                    }
-                )
+        async_to_sync(channel_layer.group_send)(
+            f"chat_{room.uuid}",
+            {
+                "type": "chat_message",
+                "id": msg.id,
+                "sender": msg.sender,
+                "message_type": msg.message_type,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+                "is_read": msg.is_read,
+                "attachments": [],
+                "offer_data": MessageCustomOfferSerializer(custom_offer).data,
+                "sender_data": {
+                    "first_name": instance.customer.user.first_name,
+                    "last_name": instance.customer.user.last_name,
+                    "photo": getattr(instance.customer.user, "photo", "").url if getattr(instance.customer.user, "photo", None) else None,
+                    "user": UserDefault.CUSTOMER,
+                }
+            }
+        )
 
-                return Response(
-                    {
-                        "status": True,
-                        "message": "Custom Order Created"
-                    },
-                    status=status.HTTP_201_CREATED
-                )
-        except ServiceProviderProfile.DoesNotExist:
-            return Response(
-                {"status": False, "message": "Provider not found"},
-                status=status.HTTP_404_NOT_FOUND
+    def create(self, request, *args, **kwargs):
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            instance = serializer.instance
+            self.send_message(instance)
+
+            handle_log_engine(
+                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Custom Offer Created by Customer", entity=instance,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True, 
+                role=UserRole.USER
             )
+            handle_log_engine(
+                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Create a New Custom Order from Client", entity=instance,
+                perform_user=instance.provider.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER
+            )
+            return Response(
+                {
+                    'status': True,
+                    'message': 'Custom offer created!',
+                    'data': serializer.data
+                }, status=status.HTTP_201_CREATED
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            handle_log_engine(
+                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.FAILED, message="Failed to Create Custom Offer",
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=False, logify=True
+            )
+            return Response(
+                {
+                    'status': False,
+                    'message': error,
+                },status=status.HTTP_400_BAD_REQUEST
+            )
+        except PermissionDenied as e:
+            handle_log_engine(
+                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=False, logify=True
+            )
+            return Response(
+                {
+                    'status': False,
+                    'message': str(e),
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
+# -----------Custom Offer Order End-------------
+
+
+class CustomerOrderViewSet(UpdateModelViewSet):
+    serializer_class = OrderSerializerAll
+    permission_classes = [IsAuthenticated]
+    pagination_class = DefaultPagination
+
+    def send_message(self, order, changes_object=None):
+        user = order.customer.user
+        channel_layer = get_channel_layer()
+        room = ChatRoom.objects.get(
+            customer=order.customer,
+            provider=order.provider
+        )
+        msg = ChatMessage.objects.create(
+            room=room,
+            sender=UserDefault.CUSTOMER,
+            message_type=SendMessageType.OFFER,
+            content=f"Custom offer: {order.title}"
+        )
+        custom_offer = CustomOffer.objects.create(
+            message=msg,
+            order_object=order,
+            changes_object=changes_object
+        )
+        
+        async_to_sync(channel_layer.group_send)(
+            f"chat_{room.uuid}",
+            {
+                "type": "chat_message",
+                "id": msg.id,
+                "sender": msg.sender,
+                "message_type": msg.message_type,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+                "is_read": msg.is_read,
+                "attachments": [],
+                "offer_data": MessageCustomOfferSerializer(custom_offer).data,
+                "sender_data": {
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "photo": getattr(user, "photo", "").url if getattr(user, "photo", None) else None,
+                    "user": UserDefault.CUSTOMER,
+                }
+            }
+        )
+
+    def get_filter_data(self, queryset):
+        # ---- Query Params ----
+        status = self.request.query_params.get("status")
+        q = self.request.query_params.get("q")
+        category_id = self.request.query_params.get("category_id")
+        budget = self.request.query_params.get("budget")
+
+        working_date = self.request.query_params.get("working_date")
+        created_at = self.request.query_params.get("created_at")
+
+        # ---- Budget ---- confirm/complete/cancel **Important and Only Workable
+        if status:
+            if status == "confirm":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]
+                )
+            elif status == "complete":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.COMPLETED, OrderStatus.IN_PROGRESS]
+                )
+            elif status == "cancel":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.CANCELLATION_REQUEST, OrderStatus.CANCELLED, OrderStatus.REFUND_REQUEST, OrderStatus.REFUND]
+                )
+
+        # ---- Search Filter ----
+        if q:
+            queryset = queryset.filter(
+                Q(title__icontains=q) |
+                Q(description__icontains=q)
+            )
+
+        # ---- Category Filter ----
+        if category_id:
+            queryset = queryset.filter(
+                category__id=category_id
+            )
+        
+        # ---- Budget ----
+        if budget:
+            queryset = queryset.filter(
+                amount__lte=budget
+            )
+
+        # ---- Rating Filter ----
+        if working_date:
+            queryset = queryset.filter(working_date=working_date)
+        
+        # ---- Availability ----
+        if created_at:
+            try:
+                date_obj = datetime.strptime(created_at, "%Y-%m-%d")
+                next_day = date_obj + timedelta(days=1)
+                queryset = queryset.filter(
+                    created_at__gte=date_obj,
+                    created_at__lt=next_day
+                )
+            except ValueError:
+                pass
+        
+        return queryset
+
+    def get_serializer_context(self):
+        return {"request": self.request, "profile_type": UserDefault.CUSTOMER}
+
+    def get_queryset(self):
+        return Order.objects.filter(customer=self.request.user.customer_profile).order_by("-created_at")
+    
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.get_queryset()
+            orders = self.get_filter_data(queryset)
+
+            page = self.paginate_queryset(orders)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(orders, many=True)
+            return Response({
+                "status": True,
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
-                {"status": False, "message": str(e)},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    'status': False,
+                    'messgae': str(e),
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=True, methods=["get"], url_path=r"requests(?:/(?P<request_id>\d+))?")
-    def requests(self, request, *args, **kwargs):
+    @action(detail=True, methods=["post"])
+    def counter(self, request, *args, **kwargs):
         order = self.get_object()
-        request_id = kwargs.get("request_id")
-        if request_id:
-            order_request = get_object_or_404(
-                order.order_requests,
-                id=request_id
-            )
-            serializer = OrderRequestSerializerForOrder(order_request)
-            return Response(
-                {"status": True, "data": serializer.data},
-                status=status.HTTP_200_OK
-            )
-        serializer = OrderRequestSerializerForOrder(
-            order.order_requests.all(),
-            many=True
-        )
-        return Response(
-            {"status": True, "data": serializer.data},
-            status=status.HTTP_200_OK
-        )
-    
-    def order_action_permission(self, order, order_request, action_status):
-        if action_status not in (OrderRequestStatus.ACCEPTED, OrderRequestStatus.PENDING, OrderRequestStatus.REJECTED):
-            raise Exception("Wrong Status Value.")
-        if OrderRequest.objects.filter(order=order, status=OrderRequestStatus.ACCEPTED).exists():
-            raise Exception("Already one of request accepted!")
-        if order.customer.user == order_request.provider.user:
-            raise Exception("Same user can't accept the order request")
-        return True
-
-    @action(detail=True, methods=["post"], url_path="accept-request/(?P<request_id>\\d+)")
-    def accept_request(self, request, *args, **kwargs):
-        action_status = request.data.get("action_status", "").upper()
-        order = self.get_object()
-        order_request = OrderRequest.objects.get(
-            id=self.kwargs.get("request_id"),
-            order=order
-        )
-        
-        if action_status == "CANCEL":
-            if order_request.status in [OrderRequestStatus.ACCEPTED] and order.status in [OrderStatus.ACCEPT]:
-                with transaction.atomic():
-                    OrderRequest.objects.filter(
-                        order=order
-                    ).update(status=OrderRequestStatus.PENDING)
-                    order.provider = None
-                    order.status=OrderStatus.ACTIVE
-                    order.amount=0
-                    order.save(update_fields=["status", "amount", "provider"])
-                    self.create_log(
-                        "Request Cancel", entity=order, for_notify=True, user=order_request.provider.user,
-                        metadata={"reference_user_id": self.request.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
-                    )
-                    return Response(
-                        {
-                            "status": True,
-                            "message": "Accepted Request Cancel."
-                        }
-                    )
-            else:
-                raise Exception("You can't Cancel This Request.")
-        self.order_action_permission(order, order_request, action_status)
-        
-        if action_status == OrderRequestStatus.REJECTED:
-            with transaction.atomic():
-                if order_request.status == OrderRequestStatus.REJECTED:
-                    raise Exception("This order request already rejected.")
-                order_request.status = OrderRequestStatus.REJECTED
-                order_request.save(update_fields=["status"])
-                self.create_log(
-                    "Request Rejected", entity=order, for_notify=True, user=order_request.provider.user,
-                    metadata={"reference_user_id": self.request.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
-                )
-                return Response({"status": True, "message": "Order Request Rejected"}, status=status.HTTP_200_OK)
-        elif action_status == OrderRequestStatus.ACCEPTED:
-            with transaction.atomic():
-                amount = request.data.get("amount", None)
-                if not amount:
-                    raise Exception("Final Amount Must be Set.")
-                OrderService.accept_order(order, order_request, float(amount))
-                self.create_log(
-                    "Request Accept", entity=order, for_notify=True, user=order_request.provider.user,
-                    metadata={"reference_user_id": self.request.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
-                )
-                return Response({"status": True, "message": "Order Request Accepted"}, status=status.HTTP_200_OK)
-    
-    def get_accepted_order_request(self, order, request_id=None):
-        if request_id:
-            try:
-                return get_object_or_404(
-                    order.order_requests,
-                    id=request_id,
-                    status=OrderRequestStatus.ACCEPTED
-                )
-            except:
-                return get_object_or_404(OrderRequest, order=order, status=OrderRequestStatus.ACCEPTED)
-        else:
-            return get_object_or_404(
-                order.order_requests,
-                status=OrderRequestStatus.ACCEPTED
-            )
-
-    @action(detail=True, methods=["get"], url_path=r"payment(?:/(?P<request_id>\d+))?")
-    def order_payment(self, request, *args, **kwargs):
         try:
-            order = self.get_object()
+            serializer = CounterSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save(
+                order=order, profile_type=UserDefault.CUSTOMER
+            )
 
+            self.send_message(order=order, changes_object=serializer.get_changes_object())
+
+            handle_log_engine(
+                request=request, action="COUNTER OFFER SEND", status=LogStatus.SUCCESS, message="Send Counter Offer from Customer.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Received Counter Offer from Customer"
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": "Counter Offer Sent"
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+
+            handle_log_engine(
+                request=request, action="COUNTER OFFER SEND", status=LogStatus.FAILED, message="Failed to Send Counter Offer.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
+            )
+            return Response(
+                {
+                    'status': False,
+                    'message': error,
+                },status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def get_or_create_slot_exception(self, order, exception_type):
+        if not (order.provider and order.working_date and order.working_start_time):
+            return None
+    
+        reason=f"{exception_type} via order"
+        if HelperSlotException.objects.filter(order=order).exists():
+            slot_exception = HelperSlotException.objects.filter(order=order).first()
+            slot_exception.type = exception_type
+            slot_exception.date = order.working_date
+            slot_exception.start_time = order.working_start_time
+            slot_exception.end_time = order.end_time
+            slot_exception.reason = reason
+            slot_exception.save()
+        else:
+            slot_exception = HelperSlotException.objects.create(
+                provider=order.provider,
+                order=order,
+                
+                type=exception_type,
+                date=order.working_date,
+                start_time=order.working_start_time,
+                end_time=order.end_time,
+                reason=reason
+            )
+        return slot_exception
+
+    @action(detail=True, methods=["get"])
+    def accept(self, request, *args, **kwargs):
+        order = self.get_object()
+        if order.status != OrderStatus.PENDING:
+            raise ValueError(f"Order already {order.status}.")
+        with transaction.atomic():
+            order.status = OrderStatus.ACCEPT
+            order.accepted_at = timezone.localtime(timezone.now())
+            order.save()
+
+            self.get_or_create_slot_exception(order, HelperSlotExceptionType.FREEZED)
+            self.send_message(order=order)
+
+            handle_log_engine(
+                request=request, action="ACCEPT OFFER", status=LogStatus.SUCCESS, message="Accept the Custom Offer.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Accept the Custom Offer by Customer"
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": "Order accept and awaiting for payment."
+                }, status=status.HTTP_200_OK
+            )
+
+    @action(detail=True, methods=["get"], url_path="pay-and-confirm")
+    def pay_and_confirm(self, request, *args, **kwargs):
+        order = self.get_object()
+        try:
             # Error Handling, Permission and Acceptance For Payment
             if order.payment_transactions.filter(type=PaymentTransactionType.CREDIT, action=PaymentAction.ORDER_PAYMENT).exists():
                 return Response(
@@ -311,8 +413,6 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 )
             
             with transaction.atomic():
-                order_request = self.get_accepted_order_request(order, kwargs.get("request_id", None))
-
                 # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
                 # Here Code for Payment Process and Build Logic
                 # payment_information = payment information value json
@@ -321,6 +421,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 # Payment Transaction----
                 payment = PaymentTransactionModule(
                     user=request.user,
+                    profile=UserDefault.CUSTOMER,
                     amount=order.amount,
                     reference_object=order,
                     type=PaymentTransactionType.CREDIT,
@@ -332,523 +433,871 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 order.status = OrderStatus.CONFIRM
                 order.payment_status = OrderPaymentStatus.PAID
                 order.save(update_fields=["status", "payment_status"])
-                self.create_log(
-                    "Order Payment Complete", entity=order, for_notify=True, user=order.customer.user,
-                    metadata={"reference_user_id": order.provider.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+
+                self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+                self.send_message(order=order)
+
+                handle_log_engine(
+                    request=request, action="PAYMENT COMPLETE", status=LogStatus.SUCCESS, message="Payment Complete & Order Confirm", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=self.request.user, send_to_type=UserDefault.CUSTOMER
                 )
-                self.create_log(
-                    "Order Confirm", entity=order, for_notify=True, user=order.provider.user,
-                    metadata={"reference_user_id": order.customer.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
+                handle_log_engine(
+                    request=request, action="PAYMENT COMPLETE", status=LogStatus.SUCCESS, message="Payment Complete & Order Confirm", entity=order,
+                    notify=True, logify=False,
+                    role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER
                 )
                 return Response(
-                    {"status": True, "message": "Order payment complete!"},
+                    {"status": True, "message": "Order pay and confirm!"},
                     status=status.HTTP_200_OK
                 )
-        except Exception as e:
-            return Response(
-                {"status": False, "message": str(e)},
-                status=status.HTTP_400_BAD_REQUEST
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            handle_log_engine(
+                request=request, action="PAYMENT COMPLETE", status=LogStatus.FAILED, message=str(e),
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
             )
 
-    @action(detail=True, methods=["get", "post"], url_path=r"review")
-    def order_review(self, request, *args, **kwargs):
-        order = self.get_object()
-        order_request = self.get_accepted_order_request(order=order)
-        user = request.user
-        if request.method == "GET":
-            review = ReviewAndRating.objects.get(order=order, customer=user.hasCustomerProfile)
-            serializer = ReviewAndRatingSerializer(review, context={"request": request, "present": "in_order"})
             return Response(
-                {"status": True, "data": serializer.data},
-                status=status.HTTP_200_OK
-            ) 
-        if request.method == "POST":
-            if order.status not in (OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE):
-                raise Exception("Only Complete Work can review.")
-            elif ReviewAndRating.objects.filter(order=order).exists():
-                raise Exception("Review already submited.")
-            try:
-                with transaction.atomic():
-                    serializer = ReviewAndRatingSerializer(data=request.data, context={"request": request, "order": order, "present": "in_order"})
-                    serializer.is_valid(raise_exception=True)
-                    serializer.save()
-                    self.create_log(
-                        "Submit Feedback", entity=order, for_notify=True, user=order.provider.user,
-                        metadata={"reference_user_id": order.customer.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
-                    )
-                    return Response(
-                        {"status": True, "message": "Thanks for your reviews.", "data": serializer.data},
-                        status=status.HTTP_200_OK
-                    )
-            except ValidationError:
-                error = {key: str(value[0]) for key, value in serializer.errors.items()}
+                {
+                    'status': False,
+                    'message': error,
+                },status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=["post"], url_path="propose-new-time")
+    def propose_new_time(self, request, *args, **kwargs):
+        order  = self.get_object()
+        with transaction.atomic():
+            data = request.data
+            action = data.pop("action", None)
+            if action == "create":
+                serializer = ProposeNewTimeSerializer(data=request.data, context={"order": order})
+            elif action == "update":
+                serializer = ProposeNewTimeActionSerializer(data=request.data)
+            else:
+                raise Exception("Action not mention!")
+            serializer.is_valid(raise_exception=True)
+            serializer.save(order=order, profile_type=UserDefault.CUSTOMER)
+
+            self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+            self.send_message(order=order, changes_object=serializer.get_changes_object())
+            
+            handle_log_engine(
+                request=request, action="PROPOSE NEW TIME", status=LogStatus.SUCCESS, message="Send Propose New Time for Changes Time", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Received Propose New Time for Changes Time."
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": serializer.get_response_message()
+                }, status=status.HTTP_200_OK
+            )
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, *args, **kwargs):
+        order = self.get_object()
+        data = request.data
+        message = data.get("message", None)
+        if message is None:
+            raise ValueError("Cancellation Reason/Message must be needed.")
+        
+        with transaction.atomic():
+            if order.status in [OrderStatus.PENDING, OrderStatus.ACCEPT] and order.payment_status == OrderPaymentStatus.UNPAID:
+                order.status = OrderStatus.CANCELLED
+                order.payment_status = OrderPaymentStatus.CANCELLED
+                response_message = "Order Cancelled"
+            elif order.status == OrderStatus.CANCELLATION_REQUEST:
                 return Response(
-                    {"status": False, "message": error},
-                    status=status.HTTP_400_BAD_REQUEST
+                    {
+                        "status": False,
+                        "message": "Cancellation Request already Send!"
+                    }, status=status.HTTP_400_BAD_REQUEST
                 )
-            except Exception as e:
+            elif order.status in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS] and order.payment_status == OrderPaymentStatus.PAID:
+                order.status = OrderStatus.CANCELLATION_REQUEST
+                OrderChangesRequest.objects.create(
+                    order=order,
+                    request_by=UserDefault.CUSTOMER,
+                    status=OrderChangesRequestStatus.NO_RESPONSE,
+                    changes_type=ChangesRequestType.CANCEL,
+                    changes_data={
+                        "message": message
+                    }
+                )
+                response_message = "Order Cancellation Request Send!"
+            else:
                 return Response(
-                    {"status": False, "message": str(e)},
-                    status=status.HTTP_400_BAD_REQUEST
+                    {
+                        "status": False,
+                        "message": f"Order already {order.status}"
+                    }, status=status.HTTP_400_BAD_REQUEST
+                )
+            order.save()
+
+            handle_log_engine(
+                request=request, action="ORDER CANCELLATION REQUEST", status=LogStatus.SUCCESS, message="Send Cancel Request for Cancel This Order", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": response_message
+                }, status=status.HTTP_200_OK
+            )
+    
+    @action(detail=True, methods=["post"], url_path="cancel-accept")
+    def cancellation_accept(self, request, *args, **kwargs):
+        order = self.get_object()
+        data = request.data
+
+        # post data----
+        request_id = data.get("changes_request_id", None)
+        action = data.get("action", None)
+
+        # data validation----
+        if request_id is None:
+            raise ValueError("Changes Request must be needed!")
+        elif action is None:
+            raise ValueError("Changes action must be needed!")
+        elif not OrderChangesRequest.objects.filter(pk=request_id).exists():
+            raise ValueError("Wrong Request ID.")
+        
+        # get refund amount----
+        def get_refund_amount(order):
+            return order.amount
+        
+        # user validation----
+        changes_request = OrderChangesRequest.objects.get(pk=request_id)
+        if changes_request.request_by == UserDefault.CUSTOMER:
+            raise Exception("You can't perform this action")
+        
+        # use logic---
+        with transaction.atomic():
+            if action.upper() == OrderChangesRequestStatus.ACCEPT:
+                changes_request.status = OrderChangesRequestStatus.ACCEPT
+                changes_request.save()
+                
+                Order.objects.filter(pk=order.id).update(
+                    status=OrderStatus.REFUND_REQUEST,
+                    payment_status=OrderPaymentStatus.REFUND
+                )
+                OrderRefundRequest.objects.create(
+                    order=order,
+                    customer=order.customer,
+                    reason=changes_request.changes_data.get("message", None),
+                    order_amount=order.amount,
+                    refund_amount=get_refund_amount(order)
+                )
+                HelperSlotException.objects.filter(order=order).update(is_active=False)
+                response_message = "Order Cancelled Confirm & Refund Processing!"
+
+                handle_log_engine(
+                    request=request, action="CANCELLATION CONFIRM", status=LogStatus.SUCCESS, message="Order Cencellation Request Confirm By Customer.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Order Cencellation Request Confirm By Customer."
+                )
+            elif action.upper() in [OrderChangesRequestStatus.DECLINED, "REJECT"]:
+                changes_request.status = OrderChangesRequestStatus.DECLINED
+                changes_request.save()
+                response_message = "Order Cancellation Declined!"
+
+                handle_log_engine(
+                    request=request, action="CANCELLATION REJECTED", status=LogStatus.SUCCESS, message="Order Cencellation Request Rejected By Customer.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Order Cencellation Request Rejected By Customer."
+                )
+            return Response(
+                {
+                    "status": True,
+                    "message": response_message
+                }, status=status.HTTP_200_OK
+            )
+
+    @action(detail=True, methods=["post"], url_path="give-feedback")
+    def give_feedback(self, request, *args, **kwargs):
+        order = self.get_object()
+        try:
+            serializer = ReviewAndRatingSerializer(data=request.data, context={"order": order, "send_by": UserDefault.CUSTOMER, "request": request})
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            
+            handle_log_engine(
+                request=request, action="SEND FEEDBACK", status=LogStatus.SUCCESS, message="Send Feedback with this Order.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Received Feedback with this Order."
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": "Thanks for your feedback!"
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            handle_log_engine(
+                request=request, action="SEND FEEDBACK", status=LogStatus.FAILED, message="Failed to Send Feedback with this Order.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
+            )
+            return Response(
+                {
+                    'status': False,
+                    'message': error,
+                },status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def create(self, request, *args, **kwargs):
+        handle_log_engine(
+            request=request, action="POST METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Post Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
+        )
+        return Response(
+            {
+                "status": True,
+                "message": "Create method not allowed!"
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    
+    def update(self, request, *args, **kwargs):
+        handle_log_engine(
+            request=request, action="UPDATE METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Update Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
+        )
+        return Response(
+            {
+                "status": True,
+                "message": "Update method not allowed!"
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    
+    def destroy(self, request, *args, **kwargs):
+        handle_log_engine(
+            request=request, action="DELETE METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Delete Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER
+        )
+        return Response(
+            {
+                "status": True,
+                "message": "Delete method not allowed!"
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
+class ProviderOrderViewSet(UpdateModelViewSet):
+    serializer_class = OrderSerializerAll
+    permission_classes = [IsAuthenticated]
+    pagination_class = DefaultPagination
+
+    def send_message(self, order, changes_object=None):
+        print("changes_object: ", changes_object)
+        user = order.provider.user
+        channel_layer = get_channel_layer()
+        room = ChatRoom.objects.get(
+            customer=order.customer,
+            provider=order.provider
+        )
+        msg = ChatMessage.objects.create(
+            room=room,
+            sender=UserDefault.PROVIDER,
+            message_type=SendMessageType.OFFER,
+            content=f"Custom offer: {order.title}"
+        )
+        custom_offer = CustomOffer.objects.create(
+            message=msg,
+            order_object=order,
+            changes_object=changes_object
+        )
+        
+        async_to_sync(channel_layer.group_send)(
+            f"chat_{room.uuid}",
+            {
+                "type": "chat_message",
+                "id": msg.id,
+                "sender": msg.sender,
+                "message_type": msg.message_type,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+                "is_read": msg.is_read,
+                "attachments": [],
+                "offer_data": MessageCustomOfferSerializer(custom_offer).data,
+                "sender_data": {
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "photo": getattr(user, "photo", "").url if getattr(user, "photo", None) else None,
+                    "user": UserDefault.PROVIDER,
+                }
+            }
+        )
+
+
+    def get_filter_data(self, queryset):
+        # ---- Query Params ----
+        status = self.request.query_params.get("status")
+        q = self.request.query_params.get("q")
+        category_id = self.request.query_params.get("category_id")
+        budget = self.request.query_params.get("budget")
+
+        working_date = self.request.query_params.get("working_date")
+        created_at = self.request.query_params.get("created_at")
+
+        # ---- Budget ---- confirm/complete/cancel **Important and Only Workable
+        if status:
+            if status == "confirm":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]
+                )
+            elif status == "complete":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.COMPLETED, OrderStatus.IN_PROGRESS]
+                )
+            elif status == "cancel":
+                queryset = queryset.filter(
+                    status__in=[OrderStatus.CANCELLATION_REQUEST, OrderStatus.CANCELLED, OrderStatus.REFUND_REQUEST, OrderStatus.REFUND]
                 )
 
-    @action(detail=True, methods=["get", "post"], url_path="refund-request")
-    def send_refund_request(self, request, *args, **kwargs):
+        # ---- Search Filter ----
+        if q:
+            queryset = queryset.filter(
+                Q(title__icontains=q) |
+                Q(description__icontains=q)
+            )
+
+        # ---- Category Filter ----
+        if category_id:
+            queryset = queryset.filter(
+                category__id=category_id
+            )
+        
+        # ---- Budget ----
+        if budget:
+            queryset = queryset.filter(
+                amount__lte=budget
+            )
+
+        # ---- Rating Filter ----
+        if working_date:
+            queryset = queryset.filter(working_date=working_date)
+        
+        # ---- Availability ----
+        if created_at:
+            try:
+                date_obj = datetime.strptime(created_at, "%Y-%m-%d")
+                next_day = date_obj + timedelta(days=1)
+                queryset = queryset.filter(
+                    created_at__gte=date_obj,
+                    created_at__lt=next_day
+                )
+            except ValueError:
+                pass
+        
+        return queryset
+
+    def get_serializer_context(self):
+        return {"request": self.request, "profile_type": UserDefault.PROVIDER}
+
+    def get_queryset(self):
+        user = self.request.user
+        return Order.objects.filter(provider=user.service_provider_profile).order_by("-created_at")
+    
+    def list(self, request, *args, **kwargs):
         try:
+            queryset = self.get_queryset()
+            orders = self.get_filter_data(queryset)
+
+            page = self.paginate_queryset(orders)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(orders, many=True)
+            return Response({
+                "status": True,
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {
+                    'status': False,
+                    'messgae': str(e),
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=["post"])
+    def counter(self, request, *args, **kwargs):
+        try:
+            serializer = CounterSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
             order = self.get_object()
-            if order.status not in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS]:
-                raise Exception("You can not send refund requst now!")
+            serializer.save(
+                order=order, profile_type=UserDefault.PROVIDER
+            )
+
+            self.send_message(order=order, changes_object=serializer.get_changes_object())
+
+            handle_log_engine(
+                request=request, action="COUNTER OFFER SEND", status=LogStatus.SUCCESS, message="Send Counter Offer from Provider.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Received Counter Offer from Provider"
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": "Counter Offer Sent"
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            handle_log_engine(
+                request=request, action="COUNTER OFFER SEND", status=LogStatus.FAILED, message="Failed to Send Counter Offer.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
+            )
+            return Response(
+                {
+                    'status': False,
+                    'message': error,
+                },status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    def get_or_create_slot_exception(self, order, exception_type):
+        if not (order.provider and order.working_date and order.working_start_time):
+            return None
+        reason=f"{exception_type} via order"
+        if HelperSlotException.objects.filter(order=order).exists():
+            slot_exception = HelperSlotException.objects.filter(order=order).first()
+            slot_exception.type = exception_type
+            slot_exception.date = order.working_date
+            slot_exception.start_time = order.working_start_time
+            slot_exception.end_time = order.end_time
+            slot_exception.reason = reason
+            slot_exception.save()
+        else:
+            slot_exception = HelperSlotException.objects.create(
+                provider=order.provider,
+                order=order,
+                
+                type=exception_type,
+                date=order.working_date,
+                start_time=order.working_start_time,
+                end_time=order.end_time,
+                reason=reason
+            )
+        return slot_exception
+
+    @action(detail=True, methods=["get"])
+    def accept(self, request, *args, **kwargs):
+        order = self.get_object()
+        if order.status != OrderStatus.PENDING:
+            raise ValueError(f"Order already {order.status}.")
+        with transaction.atomic():
+            order.status = OrderStatus.ACCEPT
+            order.accepted_at = timezone.localtime(timezone.now())
+            order.save()
+
+            self.get_or_create_slot_exception(order, HelperSlotExceptionType.FREEZED)
+
+            self.send_message(order=order)
+
+            handle_log_engine(
+                request=request, action="ACCEPT OFFER", status=LogStatus.SUCCESS, message="Accept the Custom Offer.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Accept the Custom Offer by Provider"
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": "Order accept and awaiting for payment."
+                }, status=status.HTTP_200_OK
+            )
+
+    @action(detail=True, methods=["post"], url_path="set-work-hour")
+    def set_work_hour(self, request, *args, **kwargs):
+        order = self.get_object()
+        try:
             with transaction.atomic():
-                serializer = OrderRefundRequestSerializer(data=request.data, context={"request": request, "order": order})
+                serializer = SetHourSerializer(data=request.data, context={"order": order})
                 serializer.is_valid(raise_exception=True)
-                serializer.save()
-                order.status = OrderStatus.REFUND_REQUEST
-                order.save()
-                self.create_log(
-                    "Refund Request Send", serializer.instance, for_notify=True,
-                    metadata={"reference_user_id": self.request.user.id, "reference_object_id": order.id, "reference_object_type": "Order"}
+                serializer.save(order=order)
+
+                self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+                self.send_message(order=order, changes_object=serializer.get_changes_object())
+
+                handle_log_engine(
+                    request=request, action="SET WORK HOUR", status=LogStatus.SUCCESS, message="Set Work Hour.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
                 )
                 return Response(
                     {
                         "status": True,
-                        "message": "Refund Request Send Successfully!"
+                        "message": f"{serializer.validated_data.get("set_hour")} Hour Set for complete the work!"
                     }, status=status.HTTP_200_OK
                 )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            return Response(
-                {"status": False, "message": error},
-                status=status.HTTP_400_BAD_REQUEST
+            handle_log_engine(
+                request=request, action="SET WORK HOUR", status=LogStatus.FAILED, message="Failed to Set Work Hour.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
             )
-        except Exception as e:
-            return Response(
-                {"status": False, "message": str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-    def destroy(self, request, *args, **kwargs):
-        try:
-            order = self.get_object()
-            if order.status != OrderStatus.ACTIVE:
-                raise PermissionDenied("Order cannot be deleted at this stage.")
-            self.create_log("Delete Order")
-            return super().destroy(request, *args, **kwargs)
-            return Response(
-                {
-                    'status': True,
-                    'message': self.delete_message,
-                }, status=status.HTTP_200_OK
-            )
-        except PermissionDenied as e:
             return Response(
                 {
                     'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_406_NOT_ACCEPTABLE
-            )
-        except Exception as e:
-            return Response(
-                {
-                    'status': False,
-                    'message': str(e),
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            ) 
-
-
-# Order Section For Provider----------------------------------------------------------
-class ProviderOrderViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated, ForProviderProfile]
-
-    def create_log(self, action, entity=None, for_notify=False, user=None, metadata={}):
-        data = {
-            "user": user or self.request.user,
-            "action": action,
-            "entity": entity,
-            "request": self.request,
-            "for_notify": for_notify,
-            "metadata": metadata,
-        }
-        log = LogActivityModule(data)
-        log.create()
-
-    def get_queryset(self):
-        provider = self.request.user.hasServiceProviderProfile
-        action = self.request.query_params.get("action")
-        qs = Order.objects.select_related(
-            "category", "customer", "provider"
-        ).prefetch_related(
-            "order_requests"
-        )
-        if action == "active":
-            return qs.filter(
-                status__in=[OrderStatus.ACTIVE]
-            )
-        elif action == "requested":
-            return qs.filter(
-                order_requests__provider=provider,
-                order_requests__status=OrderRequestStatus.PENDING,
-                status=OrderStatus.ACTIVE
-            ).distinct()
-        elif action == "accept":
-            return qs.filter(
-                provider=provider,
-                status__in=[OrderStatus.ACCEPT, OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS, OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE, OrderStatus.REFUND]
-            )
-        elif action == "terminated":
-            return qs.filter(
-                order_requests__provider=provider,
-                order_requests__status=OrderRequestStatus.TERMINATE
-            ).distinct()
-        else:
-            return qs.filter(
-                Q(provider=provider) |
-                Q(order_requests__provider=provider)
-            ).distinct()
-
-    def list(self, request, *args, **kwargs):
-        try:
-            response = super().list(request, *args, **kwargs)
-            return Response(
-                {
-                    'status': True,
-                    'count': len(response.data),
-                    'data': response.data
-                }, status=status.HTTP_200_OK
-            )
-        except PermissionDenied as e:
-            return Response(
-                {
-                    'status': False,
-                    'messgae': str(e),
-                }, status=status.HTTP_406_NOT_ACCEPTABLE
-            )
-        except Exception as e:
-            return Response(
-                {
-                    'status': False,
-                    'messgae': str(e),
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    'message': error,
+                },status=status.HTTP_400_BAD_REQUEST
             )
     
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return Response(
-            {
-                'status': True,
-                'data': serializer.data
-            }, status=status.HTTP_200_OK
-        )
-
-    def check_provider_in_request(self, provider: object, order_requests: queryset):
-        for order_request in order_requests:
-            if order_request.provider_id == provider.id:
-                return order_request
-        return None
-
-    @action(detail=True, methods=["post", "get"], url_path="send-request")
-    def send_request(self, request, *args, **kwargs):
-        if request.method == "POST":
-            try:
-                with transaction.atomic():
-                    order = self.get_object()
-                    serializer = OrderRequestSerializer(
-                        data=request.data,
-                        context={"request": request, "order": order}
-                    )
-                    serializer.is_valid(raise_exception=True)
-                    serializer.save(
-                        order=order,
-                        provider=request.user.hasServiceProviderProfile
-                    )
-                    self.create_log("Send Request For Order", serializer.instance)
-                    return Response(
-                        {"status": True, "data": serializer.data},
-                        status=status.HTTP_201_CREATED
-                    )
-            except ValidationError:
-                error = {key: str(value[0]) for key, value in serializer.errors.items()}
-                return Response(
-                    {
-                        "status": False,
-                        "message": error
-                    }, status=status.HTTP_400_BAD_REQUEST
-                )
-            except Exception as e:
-                return Response(
-                    {
-                        "status": False,
-                        "message": str(e)
-                    }, status=status.HTTP_400_BAD_REQUEST
-                )
-        elif request.method == "GET":
-            order_requests = self.get_object().order_requests.all()
-            order_request = self.check_provider_in_request(request.user.hasServiceProviderProfile, order_requests)
-            if order_request:
-                get_response = OrderRequestSerializerForOrder(order_request).data
+    @action(detail=True, methods=["post"], url_path="propose-new-time")
+    def propose_new_time(self, request, *args, **kwargs):
+        order = self.get_object()
+        with transaction.atomic():
+            data = request.data
+            action = data.pop("action", None)
+            if action == "create":
+                serializer = ProposeNewTimeSerializer(data=request.data, context={"order": order})
+            elif action == "update":
+                serializer = ProposeNewTimeActionSerializer(data=request.data)
             else:
-                get_response = "You have no request for this order!"
+                raise Exception("Action not mention!")
+            serializer.is_valid(raise_exception=True)
+            serializer.save(order=order, profile_type=UserDefault.PROVIDER)
+
+            self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+            self.send_message(order=order, changes_object=serializer.get_changes_object())
+
+            handle_log_engine(
+                request=request, action="PROPOSE NEW TIME", status=LogStatus.SUCCESS, message="Send Propose New Time for Changes Time", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Received Propose New Time for Changes Time."
+            )
             return Response(
                 {
                     "status": True,
-                    "data": get_response
+                    "message": serializer.get_response_message()
                 }, status=status.HTTP_200_OK
             )
 
-    @action(detail=True, methods=["patch", "delete"], url_path="update-request")
-    def update_request(self, request, *args, **kwargs):
-        if request.method == "PATCH":
-            try:
-                order = self.get_object()
-                order_request = OrderRequest.objects.get(
-                    order=order,
-                    provider=request.user.hasServiceProviderProfile
-                )
-                if not order_request:
-                    raise Exception("You have not sent any request for this order.")
-                if order_request.status == OrderRequestStatus.ACCEPTED:
-                    raise Exception("Order Request Already Accepted.")
-                if order.status != OrderStatus.ACTIVE:
-                    raise Exception(f"Can't Update Your Request Right Now.")
-                with transaction.atomic():
-                    update_fields = []
-                    if request.data.get("budget"):
-                        order_request.budget = request.data.get("budget")
-                        update_fields.append("budget")
-                    if request.data.get("message"):
-                        order_request.message = request.data.get("message")
-                        update_fields.append("message")
-                    if update_fields:
-                        order_request.save(update_fields=update_fields)
-                    request_serializer = OrderRequestSerializer(order_request)
-                    return Response(
-                        {
-                            "status": True,
-                            "message": "Request Update Succefully!",
-                            "data": request_serializer.data
-                        }, status=status.HTTP_200_OK
-                    )
-            except Exception as e:
-                return Response(
-                    {
-                        "status": False,
-                        "message": str(e)
-                    }, status=status.HTTP_400_BAD_REQUEST
-                )
-        if request.method == "DELETE":
-            try:
-                order = self.get_object()
-                if order.status not in [OrderStatus.ACTIVE, OrderStatus.ACCEPT]:
-                    return Response(
-                        {"status": False, "message": "Can't Cancel Request."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                order_request = OrderRequest.objects.get(
-                    order=order,
-                    provider=request.user.hasServiceProviderProfile
-                )
-                # order_request.delete()
-                order_request.status = OrderRequestStatus.REJECTED
-                order_request.save(update_fields=["status"])
-                return Response(
-                    {
-                        "status": True,
-                        "message": "Request Cancel Succefully!"
-                    }, status=status.HTTP_200_OK
-                )
-            except Exception as e:
-                return Response(
-                    {
-                        "status": False,
-                        "message": str(e)
-                    }, status=status.HTTP_400_BAD_REQUEST
-                )
-
-    def start_work_progress(self, request, order: object):
-        # Error Handling, Permission and Acceptance For Start Work Progress
-        if order.payment_transactions.filter(type=PaymentTransactionType.HOLD, action=PaymentAction.PAYMENT_HOLD).exists():
-            raise Exception("Duplicate payment hold detected.")
-        if order.status == OrderStatus.IN_PROGRESS:
-            raise Exception("The order is already in progress!")
-        if order.status != OrderStatus.CONFIRM:
-            raise Exception("Only confirm order can start work progress!")
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, *args, **kwargs):
+        order = self.get_object()
+        data = request.data
+        message = data.get("message", None)
+        if message is None:
+            raise ValueError("Cancellation Reason/Message must be needed.")
         
         with transaction.atomic():
-            # Payment Transaction----
-            payment = PaymentTransactionModule(
-                user=request.user,
-                amount=order.amount,
-                reference_object=order,
-                type=PaymentTransactionType.HOLD,
-                action=PaymentAction.PAYMENT_HOLD
-            )
-            payment.payment_transaction()
-            
-            # Order update After payment transanction-------
-            order.status = OrderStatus.IN_PROGRESS
-            order.confirmation_OTP = generate_otp(length=6)
-            order.save(update_fields=["status", "confirmation_OTP"])
-            message = "Work in Progress Start."
-            return message
-    
-    def mark_work_complete(self, request, order):
-        # Error Handling, Permission and Acceptance For Mark Complete
-        if order.status == OrderStatus.COMPLETED:
-            raise Exception("The order is already completed!")
-        if order.status != OrderStatus.IN_PROGRESS:
-            raise Exception("Only in progress order can complete the order!")
-        otp_code = request.data.get("otp_code", None)
-        if not otp_code:
-            raise Exception("Need to submit otp for Complete the Order.")
-        if otp_code != order.confirmation_OTP:
-            raise Exception("OTP doesn't match.")
-        with transaction.atomic():
-            order.status = OrderStatus.COMPLETED
-            order.save(update_fields=["status"])
-            message = "Work Completed"
-            return message
-
-    @action(detail=True, methods=["patch"], url_path="status-action")
-    def status_action(self, request, *args, **kwargs):
-        if request.method == "PATCH":
-            try:
-                with transaction.atomic():
-                    order = self.get_object()
-                    message = ""
-                    order_request = OrderRequest.objects.get(
-                        order=order,
-                        provider=request.user.hasServiceProviderProfile
-                    )
-                    action_status = request.data.get("action_status", "").upper()
-                    if action_status not in ["IN_PROGRESS", "COMPLETED", "PARTIAL_COMPLETE"]:
-                        raise Exception("Wrong Action Status.")
-                    
-                    if action_status == OrderStatus.IN_PROGRESS:
-                        message = self.start_work_progress(request, order)
-                        self.create_log(
-                            "Order Work Start", entity=order, for_notify=True, user=order.customer.user,
-                            metadata={"reference_user_id": order.provider.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
-                        )
-                    if action_status == OrderStatus.COMPLETED:
-                        message = self.mark_work_complete(request, order)
-                        self.create_log(
-                            "Order Complete", entity=order, for_notify=True, user=order.customer.user,
-                            metadata={"reference_user_id": order.provider.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
-                        )
-
-                    return Response(
-                        {"status": True, "message": message},
-                        status=status.HTTP_200_OK
-                    )
-            except Exception as e:
+            if order.status in [OrderStatus.PENDING, OrderStatus.ACCEPT] and order.payment_status == OrderPaymentStatus.UNPAID:
+                order.status = OrderStatus.CANCELLED
+                order.payment_status = OrderPaymentStatus.CANCELLED
+                response_message = "Order Cancelled"
+            elif order.status == OrderStatus.CANCELLATION_REQUEST:
                 return Response(
                     {
                         "status": False,
-                        "message": str(e)
+                        "message": "Cancellation Request already Send!"
                     }, status=status.HTTP_400_BAD_REQUEST
                 )
-
-
-# Order Section For Admin----------------------------------------------------------
-class AdminOrderViewSet(UpdateModelViewSet):
-    queryset = Order.objects.all()
-    serializer_class = OrderSerializer
-    permission_classes = [ForAdminProfile]
-
-    def create_log(self, action, entity=None, for_notify=False, user=None, metadata={}):
-        data = {
-            "user": user or self.request.user,
-            "action": action,
-            "entity": entity,
-            "request": self.request,
-            "for_notify": for_notify,
-            "metadata": metadata,
-        }
-        log = LogActivityModule(data)
-        log.create()
-
-    def payable_amount(self, amount):
-        charge = (amount * 10) / 100
-        return amount - charge
-    
-    def get_accepted_order_request(self, order):
-        return get_object_or_404(
-            order.order_requests,
-            status=OrderRequestStatus.ACCEPTED
-        )
-
-    def error_and_permission_handle(self, order, payable_amount):
-        if payable_amount is None:
-            raise Exception("'payable_amount' must be set.")
-        if order.payment_transactions.filter(type=PaymentTransactionType.DEBIT, action=PaymentAction.SEND_PROVIDER).exists():
-            raise Exception("Duplicate payment disbursement detected.")
-        if order.status not in (OrderStatus.COMPLETED, OrderStatus.PARTIAL_COMPLETE):
-            raise Exception("Only Complete Order can disbursement")
-        elif order.payment_status != OrderPaymentStatus.PAID:
-            raise Exception("Only Paid order can disbursement")
-        elif order.payment_status == OrderPaymentStatus.DISBURSEMENT:
-            raise Exception("Already payment disbursement to worker.")
-        if float(payable_amount) != float(self.payable_amount(order.amount)):
-            raise Exception("Payable Amount mismatch!")
-        return True
-
-    @action(detail=True, methods=["post", "get"], url_path="pay-to-worker")
-    def pay_to_worker(self, request, *args, **kwargs):
-        order = self.get_object()
-        if request.method == "GET":
-            try:
+            elif order.status in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS] and order.payment_status == OrderPaymentStatus.PAID:
+                order.status = OrderStatus.CANCELLATION_REQUEST
+                OrderChangesRequest.objects.create(
+                    order=order,
+                    request_by=UserDefault.PROVIDER,
+                    status=OrderChangesRequestStatus.NO_RESPONSE,
+                    changes_type=ChangesRequestType.CANCEL,
+                    changes_data={
+                        "message": message
+                    }
+                )
+                response_message = "Order Cancellation Request Send!"
+            else:
                 return Response(
                     {
-                        "status": True,
-                        "data": {
-                            "payable_amount": float(order.amount - (order.amount * 10 / 100))
-                        }
-                    }, status=status.HTTP_200_OK
+                        "status": False,
+                        "message": f"Order already {order.payment_status}"
+                    }, status=status.HTTP_400_BAD_REQUEST
                 )
-            except Exception as e:
-                return Response({"status": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        elif request.method == "POST":
-            try:
-                order_request = self.get_accepted_order_request(order)
-                if not order_request:
-                    raise Exception("Accept order request not found for this order.")
-                
-                payable_amount = request.data.get("payable_amount", None)
-                self.error_and_permission_handle(order, payable_amount)
+            order.save()
 
-                with transaction.atomic():
-                    # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
-                    # Here Code for Payment Process and Build Logic
-                    # payment_information = payment information value json
-                    # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+            handle_log_engine(
+                request=request, action="ORDER CANCELLATION REQUEST", status=LogStatus.SUCCESS, message="Send Cancel Request for Cancel This Order", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": response_message
+                }, status=status.HTTP_200_OK
+            )
 
-                    # Payment Transaction----
-                    payment = PaymentTransactionModule(
-                        user=order.provider.user,
-                        amount=order.amount,
-                        reference_object=order,
-                        type=PaymentTransactionType.DEBIT,
-                        action=PaymentAction.SEND_PROVIDER
-                    )
-                    payment.payment_transaction()
-                    
-                    # Order update After payment transanction-------
-                    order.payment_status = OrderPaymentStatus.DISBURSEMENT
-                    order.save(update_fields=["payment_status"])
-                    self.create_log(
-                        "Your Payment Complete", entity=order, for_notify=True, user=order.provider.user,
-                        metadata={"reference_user_id": order.customer.user.id, "reference_object_id": order_request.id, "reference_object_type": "OrderRequest"}
-                    )
-                    return Response(
-                        {"status": True, "message": "Pay to Worker Successfully Complete!"},
-                        status=status.HTTP_200_OK
-                    )
-            except Exception as e:
-                return Response(
-                    {"status": False, "message": str(e)},
-                    status=status.HTTP_400_BAD_REQUEST
+    @action(detail=True, methods=["post"], url_path="cancel-accept")
+    def cancellation_accept(self, request, *args, **kwargs):
+        order = self.get_object()
+        data = request.data
+
+        # post data----
+        request_id = data.get("changes_request_id", None)
+        action = data.get("action", None)
+
+        # data validation----
+        if request_id is None:
+            raise ValueError("Changes Request must be needed!")
+        elif action is None:
+            raise ValueError("Changes action must be needed!")
+        elif not OrderChangesRequest.objects.filter(pk=request_id).exists():
+            raise ValueError("Wrong Request ID.")
+        
+        # get refund amount----
+        def get_refund_amount(order):
+            return order.amount
+        
+        # user validation----
+        changes_request = OrderChangesRequest.objects.get(pk=request_id)
+        if changes_request.request_by == UserDefault.PROVIDER:
+            raise Exception("You can't perform this action")
+        
+        # use logic---
+        with transaction.atomic():
+            if action.upper() == OrderChangesRequestStatus.ACCEPT:
+                changes_request.status = OrderChangesRequestStatus.ACCEPT
+                changes_request.save()
+
+                Order.objects.filter(pk=order.id).update(
+                    status=OrderStatus.REFUND_REQUEST,
+                    payment_status=OrderPaymentStatus.REFUND
                 )
+                OrderRefundRequest.objects.create(
+                    order=order,
+                    customer=order.customer,
+                    reason=changes_request.changes_data.get("message", None),
+                    order_amount=order.amount,
+                    refund_amount=get_refund_amount(order)
+                )
+                HelperSlotException.objects.filter(order=order).update(is_active=False)
+                response_message = "Order Cancelled Confirm & Refund Processing!"
+
+                handle_log_engine(
+                    request=request, action="CANCELLATION CONFIRM", status=LogStatus.SUCCESS, message="Order Cencellation Request Confirm By Provider.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Order Cencellation Request Confirm By Provider."
+                )
+            elif action.upper() in [OrderChangesRequestStatus.DECLINED, "REJECT"]:
+                changes_request.status = OrderChangesRequestStatus.DECLINED
+                changes_request.save()
+                response_message = "Order Cancellation Declined!"
+
+                handle_log_engine(
+                    request=request, action="CANCELLATION REJECTED", status=LogStatus.SUCCESS, message="Order Cencellation Request Rejected By Provider.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Order Cencellation Request Rejected By Provider."
+                )
+            return Response(
+                {
+                    "status": True,
+                    "message": response_message
+                }, status=status.HTTP_200_OK
+            )
+
+    @action(detail=True, methods=["post"], url_path="start-work")
+    def start_work(self, request, *args, **kwargs):
+        order = self.get_object()
+        try:
+            if order.status != OrderStatus.CONFIRM:
+                raise ValueError("Order must be confirmed!")
+            serializer = StartWorkSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.work_start(order=order)
+            
+            handle_log_engine(
+                request=request, action="START WORK", status=LogStatus.SUCCESS, message="Start work to complete.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": "Work Started!"
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+
+            handle_log_engine(
+                request=request, action="START WORK", status=LogStatus.FAILED, message="Failed to Start work to complete.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
+            )
+            return Response(
+                {
+                    'status': False,
+                    'message': error,
+                },status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=["post"], url_path="complete")
+    def complete(self, request, *args, **kwargs):
+        order = self.get_object()
+        try:
+            if self.get_object().status == OrderStatus.COMPLETED:
+                raise ValueError("Order already complete")
+            elif self.get_object().status != OrderStatus.IN_PROGRESS:
+                raise ValueError("Order must be in progress!")
+            
+            serializer = CompleteSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.complete(order=self.get_object())
+
+            handle_log_engine(
+                request=request, action="COMPLETE ORDER", status=LogStatus.SUCCESS, message="Mark Complete the order by OTP.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": "Work Complete!"
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            handle_log_engine(
+                request=request, action="COMPLETE ORDER", status=LogStatus.FAILED, message="Failed to Mark Complete the order.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
+            )
+            return Response(
+                {
+                    'status': False,
+                    'message': error,
+                },status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=["post"], url_path="give-feedback")
+    def give_feedback(self, request, *args, **kwargs):
+        order = self.get_object()
+        try:
+            serializer = ReviewAndRatingSerializer(data=request.data, context={"order": order, "send_by": UserDefault.PROVIDER, "request": request})
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            handle_log_engine(
+                request=request, action="SEND FEEDBACK", status=LogStatus.SUCCESS, message="Send Feedback with this Order.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                notify=True, logify=True,
+                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Received Feedback with this Order."
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": "Thanks for your feedback!"
+                }, status=status.HTTP_200_OK
+            )
+        except ValidationError:
+            error = {key: str(value[0]) for key, value in serializer.errors.items()}
+            handle_log_engine(
+                request=request, action="SEND FEEDBACK", status=LogStatus.FAILED, message="Failed to Send Feedback with this Order.", entity=order,
+                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
+            )
+            return Response(
+                {
+                    'status': False,
+                    'message': error,
+                },status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def create(self, request, *args, **kwargs):
+        handle_log_engine(
+            request=request, action="POST METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Post Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
+        )
+        return Response(
+            {
+                "status": True,
+                "message": "Post method not allowed!"
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
+    def update(self, request, *args, **kwargs):
+        handle_log_engine(
+            request=request, action="UPDATE METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Update Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
+        )
+        return Response(
+            {
+                "status": True,
+                "message": "Update method not allowed!"
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    
+    def destroy(self, request, *args, **kwargs):
+        handle_log_engine(
+            request=request, action="DELETE METHOD NOT ALLOWED", status=LogStatus.FAILED, message="Delete Method perform not allowed.",
+            perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
+        )
+        return Response(
+            {
+                "status": True,
+                "message": "Delete method not allowed!"
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
+# ========Order Views Section===================
+# ============================================================
+
+
+
+
+
+
+
+class ReviewAndRatingViewSets(UpdateModelViewSet):
+    queryset = ReviewAndRating.objects.all()
+    serializer_class = ReviewAndRatingSerializer
+    permission_classes = [ForCustomerProfile]
+
+class AdminOrderViewSet(UpdateModelViewSet):
+    queryset = Order.objects.all()
+    serializer_class = OrderSerializerAll
+    permission_classes = [ForAdminProfile]
+
+    @action(detail=True, methods=["post"], url_path="pay-provider")
+    def pay_provider(self, request, pk=None):
+        order = self.get_object()
+
+        if order.status != OrderStatus.COMPLETED:
+            raise ValidationError("Order not completed")
+
+        if order.payment_status != OrderPaymentStatus.PAID:
+            raise ValidationError("Payment not received")
+
+        PaymentTransactionModule(
+            user=order.provider.user,
+            amount=order.amount,
+            reference_object=order,
+            type=PaymentTransactionType.DEBIT,
+            action=PaymentAction.SEND_PROVIDER
+        ).payment_transaction()
+
+        order.payment_status = OrderPaymentStatus.DISBURSEMENT
+        order.save(update_fields=["payment_status"])
+
+        return Response({
+            "status": True,
+            "message": "Payment sent to provider"
+        })
+
+
+
+
 
 
 
@@ -859,6 +1308,9 @@ class PaymentTransactionViewSets(UpdateReadOnlyModelViewSet):
     serializer_class = PaymentTransactionSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_profile_type(self):
+        return self.request.headers.get("profile-type", None)
+
     def get_queryset(self):
         if self.request.user.role == UserRole.USER:
             pt = PaymentTransaction.objects.filter(
@@ -866,6 +1318,10 @@ class PaymentTransactionViewSets(UpdateReadOnlyModelViewSet):
             ).filter(
                 Q(type=PaymentTransactionType.CREDIT) | Q(type=PaymentTransactionType.DEBIT)
             )
+            if self.get_profile_type() and self.get_profile_type().upper() in UserDefault.values:
+                pt.filter(
+                    profile=self.get_profile_type().upper()
+                )
         elif self.request.user.role == UserRole.ADMIN:
             pt = PaymentTransaction.objects.all()
         else:

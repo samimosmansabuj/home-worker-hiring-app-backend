@@ -1,22 +1,30 @@
 from pathlib import Path
-from dotenv import load_dotenv
 from datetime import timedelta
-import os
-load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+from dotenv import load_dotenv
+import os
+ENV_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(ENV_BASE_DIR, ".env"))
+
+
 SECRET_KEY = os.getenv("SECRET_KEY")
 DEBUG = os.getenv('DEBUG', 'False').strip().lower() in ('true', '1', 'yes')
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS").split(",")
-CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "*").split(",")
 
 
 # Application definition
 INSTALLED_APPS = [
     'channels', 'daphne',
     # 'django.contrib.sites',
+
+    # "unfold",  # before django.contrib.admin
+    # "unfold.contrib.filters",  # optional, if special filters are needed
+    # "unfold.contrib.forms",  # optional, if special form elements are needed
+
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -31,7 +39,9 @@ INSTALLED_APPS = [
     'encrypted_model_fields',
 
     # custom app
-    'account', 'chat_notify', 'task', 'core',
+    'account', 'chat_notify', 'core', 'task',
+
+    'drf_spectacular',
     
 ]
 
@@ -57,7 +67,7 @@ else:
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': DEFAULT_RENDERER_CLASSES_,
     
-    'EXCEPTION_HANDLER': 'find_worker_config.exceptions.custom_exception_handler',
+    # 'EXCEPTION_HANDLER': 'find_worker_config.exceptions.custom_exception_handler',
     
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -69,6 +79,8 @@ REST_FRAMEWORK = {
     'DEFAULT_FILTER_BACKENDS': (
         'django_filters.rest_framework.DjangoFilterBackend',
     ),
+
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 SIMPLE_JWT = {
@@ -86,8 +98,69 @@ SIMPLE_JWT = {
 
 CORS_ORIGIN_ALLOW_ALL = True
 
+
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Worker Hiring API',
+    'DESCRIPTION': 'API documentation for your project',
+    'VERSION': '1.0.0',
+    'SECURITY': [{'BearerAuth': []}],
+    'COMPONENTS': {
+        'SECURITY_SCHEMES': {
+            'BearerAuth': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'JWT',
+            }
+        }
+    },
+}
+
 # ==================== Rest Frame Work Configurations End====================
 # ================================================================================
+
+
+# UNFOLD = {
+#     "SITE_TITLE": "Worker Hiring Admin",
+#     "NAVIGATION": [
+#         {
+#             "title": "User Management",
+#             "items": [
+#                 {"title": "Users", "link": "/admin/account/user/"},
+#                 {"title": "Providers", "link": "/admin/account/serviceproviderprofile/"},
+#             ],
+#         },
+#         {
+#             "title": "Orders",
+#             "items": [
+#                 {"title": "Orders", "link": "/admin/task/order/"},
+#                 {"title": "Change Requests", "link": "/admin/task/orderchangesrequest/"},
+#                 {"title": "Refunds", "link": "/admin/task/orderrefundrequest/"},
+#             ],
+#         },
+#         {
+#             "title": "Communication",
+#             "items": [
+#                 {"title": "Chats", "link": "/admin/chat/chatroom/"},
+#                 {"title": "Messages", "link": "/admin/chat/chatmessage/"},
+#                 {"title": "Notifications", "link": "/admin/chat/notification/"},
+#             ],
+#         },
+#         {
+#             "title": "Finance",
+#             "items": [
+#                 {"title": "Transactions", "link": "/admin/task/paymenttransaction/"},
+#             ],
+#         },
+#         {
+#             "title": "Support",
+#             "items": [
+#                 {"title": "Tickets", "link": "/admin/core/ticket/"},
+#             ],
+#         },
+#     ]
+# }
+
 
 
 MIDDLEWARE = [
@@ -177,10 +250,10 @@ USE_L10N = True
 
 LANGUAGE_CODE = 'en'
 
-LANGUAGES = [
-    ('en', 'English'),
-    ('zh', 'Chinese'),
-]
+# LANGUAGES = [
+#     ('en', 'English'),
+#     ('zh', 'Chinese'),
+# ]
 
 LOCALE_PATHS = [
     BASE_DIR / 'locale',

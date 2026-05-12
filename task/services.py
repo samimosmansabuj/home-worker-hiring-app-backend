@@ -1,6 +1,6 @@
 from django.db import transaction
-from .models import OrderRequest, Order, AdminWallet, PaymentTransaction
-from find_worker_config.model_choice import OrderStatus, OrderRequestStatus, RefundStatus, PaymentTransactionType, PaymentAction, OrderPaymentStatus
+from .models import Order, AdminWallet, PaymentTransaction
+from find_worker_config.model_choice import OrderStatus, RefundStatus, PaymentTransactionType, PaymentAction, OrderPaymentStatus
 from django.utils import timezone
 
 class OrderService:
@@ -13,14 +13,7 @@ class OrderService:
                 order.status = OrderStatus.ACCEPT
                 order.save(update_fields=["status", "provider", "amount"])
 
-                OrderRequest.objects.filter(
-                    order=order
-                ).exclude(
-                    provider=order_request.provider
-                ).update(status=OrderRequestStatus.TERMINATE)
 
-                order_request.status = OrderRequestStatus.ACCEPTED
-                order_request.save(update_fields=["status"])
         except Exception as e:
             raise Exception("Order Request not Acceptable.")
 

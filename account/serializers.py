@@ -2,16 +2,17 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod
+
+from task.models import ReviewAndRating
+from .models import HelperWallet, HelperWeeklyAvailability, SavedHelper, User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod, User
 from .utils import generate_otp
-from find_worker_config.model_choice import OTPType, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
+from find_worker_config.model_choice import OTPType, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, OrderStatus, UserDefault
 from django.core.exceptions import ObjectDoesNotExist
-from find_worker_config.model_choice import UserRole, UserDefault
+from find_worker_config.model_choice import UserRole
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.exceptions import ValidationError
 from django.core.mail import send_mail
-from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
@@ -24,7 +25,7 @@ from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.files.base import ContentFile
 
-User = get_user_model()
+# User = get_user_model()
 
 
 
@@ -72,7 +73,7 @@ class LoginOTPRequestSerializer(serializers.Serializer):
     def del_unused_otp_object(self):
         OTP.objects.filter(user=self.user, purpose=OTPType.LOGIN).delete()
 
-    def create_otp_object(self):
+    def send_otp(self):
         self.del_unused_otp_object()
         otp_code = generate_otp(length=6)
         otp_obj = OTP.objects.create(
@@ -99,9 +100,13 @@ class LoginOTPVerifySerializer(serializers.Serializer):
             "refresh": str(refresh),
             "default_profile": user.default_profile
         }
+<<<<<<< HEAD
 
 
 # Login With OTP End===========================
+=======
+# Login With OTP End============================
+>>>>>>> 9d9a19e1fdbe9afb43a69b175148d7911222c4e2
 # =================================================================
 
 # =================================================================
@@ -206,9 +211,9 @@ class SignupSerializer(serializers.ModelSerializer):
             user = User(**validated_data)
             user.set_password(password)
             user.save()
+            self.user = user
             self.create_address(user, address_data)
             self.create_referral_object(user, referral_code)
-            self.user = user
             return user
     
     def send_code(self):
@@ -248,7 +253,7 @@ class PasswordResetRequestSerializer(serializers.Serializer):
             email=self.user_email,
             purpose=OTPType.RESET_PASSWORD
         )
-        return otp.email if otp.email else otp.phone
+        return otp
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     phone = serializers.CharField(required=False)
@@ -314,10 +319,15 @@ class ChangePasswordSerializer(serializers.Serializer):
 # User Info Current ===========================
 class UserAddressSerializer(serializers.ModelSerializer):
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
-    
     class Meta:
         model = Address
         fields = "__all__"
+        extra_kwargs = {
+            "address_line": {"required": True},
+            "city": {"required": True},
+            "lat": {"required": True},
+            "lng": {"required": True},
+        }
 
 # ---------main---------
 class ServiceCategoryField(serializers.ListField):
@@ -328,43 +338,17 @@ class ServiceCategoryField(serializers.ListField):
             {"id": c.id, "title": c.title} for c in value.all()
         ]
 
+
 class CustomerProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerProfile
         fields = ["rating", "total_orders"]
         depth = True
 
-class ServiceProviderProfileSerializer(serializers.ModelSerializer):
-    service_category = ServiceCategoryField()
-    class Meta:
-        model = ServiceProviderProfile
-        fields = ["company_name", "logo", "rating", "total_jobs", "service_category", "office_location", "is_verified"]
-        depth = True
-    
-    def get_office_location(self, obj):
-        address = obj.office_location
-        if not address:
-            return None
-        return {
-            "id": address.id,
-            "address_line": address.address_line,
-            "city": address.city,
-            "lat": address.lat,
-            "lng": address.lng,
-        }
-
-class UserInfoSerializer(serializers.ModelSerializer):
-    service_category = ServiceCategoryField(required=True, source="service_provider_profile.service_category", write_only=True)
-    company_name = serializers.CharField(required=False, source="service_provider_profile.company_name", write_only=True)
-    logo = serializers.ImageField(required=False, source="service_provider_profile.logo", write_only=True)
-    customer_profile = CustomerProfileSerializer()
-    service_provider_profile = ServiceProviderProfileSerializer()
-    profile = serializers.ChoiceField(choices=UserDefault.choices, write_only=True)
-    default_profile = serializers.CharField(read_only=True)
-
+class CurrentUserInfoSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "first_name", "last_name", "username", "email", "phone", "photo", "language", "service_category", "company_name", "logo", "customer_profile", "service_provider_profile", "profile", "default_profile"]
+        fields = ["id", "first_name", "last_name", "username", "email", "phone", "photo", "language", "default_profile"]
     
     def get_photo_url(self, photo, request):
         if photo and request:
@@ -372,21 +356,14 @@ class UserInfoSerializer(serializers.ModelSerializer):
         else:
             return None
     
-    def get_user_profile_address(self, user, user_mode):
-        if user_mode == UserDefault.PROVIDER:
-            address_objects = user.service_provider_profile.office_location
-            if address_objects:
-                address = address_objects
-            elif Address.objects.filter(user=user).exists():
-                address = Address.objects.filter(user=user).first()
-        elif user_mode == UserDefault.CUSTOMER:
-            address_objects = Address.objects.filter(
-                user=user, is_default=True
-            )
-            if address_objects:
-                address = address_objects.first()
-            elif Address.objects.filter(user=user).exists():
-                address = Address.objects.filter(user=user).first()
+    def get_user_profile_address(self, user):
+        address_objects = Address.objects.filter(
+            user=user, is_default=True
+        )
+        if address_objects:
+            address = address_objects.first()
+        elif Address.objects.filter(user=user).exists():
+            address = Address.objects.filter(user=user).first()
         
         if address:
             return {
@@ -400,114 +377,84 @@ class UserInfoSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        user_mode = self.context.get("user_mode")
         request = self.context.get("request")
-
         data["photo"] = self.get_photo_url(data.get("photo"), request)
-        data["address"] = self.get_user_profile_address(instance, user_mode)
-
-        if user_mode == UserDefault.CUSTOMER:
-            data.pop("service_provider_profile")
-        elif user_mode == UserDefault.PROVIDER:
-            data.pop("customer_profile")
-        else:
-            data.pop("service_provider_profile")
-            data.pop("customer_profile")
-        
-        if hasattr(instance, "distance"):
-            data["distance_km"] = instance.distance
-
+        data["address"] = self.get_user_profile_address(instance)
         return data
 
-    def set_provider_data(self, instance, validated_data):
-        user_mode = self.context.get("user_mode")
-        if user_mode == UserDefault.PROVIDER and validated_data.get("service_provider_profile"):
-            service_categories = validated_data["service_provider_profile"].pop("service_category", None)
-            company_name = validated_data["service_provider_profile"].pop("company_name", None)
-            logo = validated_data["service_provider_profile"].pop("logo", None)
-            if not validated_data["service_provider_profile"]:
-                validated_data.pop("service_provider_profile")
-            if hasattr(instance, "service_provider_profile"):
-                provider = instance.service_provider_profile
-                if service_categories:
-                    provider.service_category.set(service_categories)
-                if company_name:
-                    provider.company_name = company_name
-                if logo:
-                    provider.logo = logo
-                provider.save()
-        else:
-            if validated_data.get("service_provider_profile"): validated_data.pop("service_provider_profile")
-        return validated_data
-
-    def create_user_default_profile(self, user, profile_type):
-        if profile_type == UserDefault.CUSTOMER:
-            profile, _ = CustomerProfile.objects.get_or_create(user=user)
-        elif profile_type == UserDefault.PROVIDER:
-            profile, _ = ServiceProviderProfile.objects.get_or_create(user=user)
-    
-    def update(self, instance, validated_data):
-        profile = validated_data.pop("profile", None)
-        if profile in (UserDefault.CUSTOMER, UserDefault.PROVIDER):
-            self.create_user_default_profile(instance, profile)
-            validated_data["default_profile"] = profile
-        
-        validated_data = self.set_provider_data(instance, validated_data)
-
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        instance.save()
-        return instance
-
-class ProviderSerializer(serializers.ModelSerializer):
-    company_name = serializers.CharField(source="service_provider_profile.company_name", read_only=True)
-    logo = serializers.SerializerMethodField()
-    rating = serializers.FloatField(source="service_provider_profile.rating", read_only=True)
-    total_jobs = serializers.IntegerField(source="service_provider_profile.total_jobs", read_only=True)
-    is_verified = serializers.BooleanField(source="service_provider_profile.is_verified", read_only=True)
-
-    service_category = serializers.SerializerMethodField()
-    office_location = serializers.SerializerMethodField()
-
-    distance_km = serializers.FloatField(read_only=True)
-
+from task.models import ServiceCategory
+class CurrentUserHelperSerializer(serializers.ModelSerializer):
+    service_category = ServiceCategoryField(required=True)
+    company_name = serializers.CharField(required=True)
+    hourly_rate = serializers.DecimalField(required=True, max_digits=9, decimal_places=2)
+    min_booking_hours = serializers.DecimalField(required=True, max_digits=9, decimal_places=2)
+    portfolio = serializers.SerializerMethodField(read_only=True)
+    reviews_and_ratings = serializers.SerializerMethodField(read_only=True)
+    office_location = serializers.SerializerMethodField(read_only=True)
     class Meta:
-        model = User
-        fields = [
-            "id", "first_name", "last_name", "username", "email", "phone", "photo", "company_name", "logo", "rating", "total_jobs", "is_verified", "service_category", "office_location", "distance_km"
+        model = ServiceProviderProfile
+        fields = ["company_name", "logo", "details", "hourly_rate", "min_booking_hours", "office_location", "strike_count", "account_status", "availability_status", "is_verified", "complete_rate", "total_jobs", "rating", "service_category", "portfolio", "reviews_and_ratings"]
+        read_only_fields = ["office_location", "strike_count", "account_status", "is_verified", "complete_rate", "total_jobs", "rating"]
+    
+    def get_reviews_and_ratings(self, obj):
+        request = self.context.get("request")
+        return [
+            {
+                "id": review.id,
+                "customer": {
+                    "id": review.customer.id,
+                    "first_name": review.customer.user.first_name,
+                    "last_name": review.customer.user.last_name,
+                    "photo": request.build_absolute_uri(review.customer.user.photo.url) if review.customer.user.photo else None,
+                },
+                "rating": review.rating,
+                "review": review.review,
+                "created_at": review.created_at
+            }
+            for review in obj.provider_reviews.all()
         ]
 
+    def get_portfolio(self, obj):
+        request = self.context.get("request")
+        return [
+            {
+                "id": order.id,
+                "title": order.title,
+                "description": order.description,
+                "working_date": order.working_date,
+                "picture": request.build_absolute_uri(order.order_attachments.first().file.url) if order.order_attachments.exists() else None
+            }
+            for order in obj.orders_as_provider.filter(status=OrderStatus.COMPLETED).order_by("-working_date")
+        ]
+    
     def get_logo(self, obj):
-        logo = getattr(obj.service_provider_profile, "logo", None)
+        logo = getattr(obj, "logo", None)
         if logo:
             request = self.context.get("request")
             return request.build_absolute_uri(logo.url) if request else logo.url
         return None
 
     def get_service_category(self, obj):
-        profile = getattr(obj, "service_provider_profile", None)
-        if not profile:
-            return []
         return [
             {
                 "id": cat.id,
                 "title": cat.title
             }
-            for cat in profile.service_category.all()
+            for cat in obj.service_category.all()
         ]
 
     def get_office_location(self, obj):
-        profile = getattr(obj, "service_provider_profile", None)
-        if not profile or not profile.office_location:
-            return None
-        office = profile.office_location
-        return {
-            "id": office.id,
-            "address_line": office.address_line,
-            "city": office.city,
-            "lat": office.lat,
-            "lng": office.lng,
-        }
+        if obj.office_location:
+            office = obj.office_location
+            return {
+                "id": office.id,
+                "address_line": office.address_line,
+                "city": office.city,
+                "lat": office.lat,
+                "lng": office.lng,
+            }
+        return None
+
 
 # -------------------------------
 # Referral Serializer
@@ -519,7 +466,6 @@ class ReferralSerializer(serializers.ModelSerializer):
         model = Referral
         fields = ["id", "referrer", "referrer_email", "referred", "referred_email", "code", "reward_given", "created_at"]
         read_only_fields = ["code", "reward_given", "created_at"]
-# -------------------------------
 # -------------------------------
 # Voucher Serializer
 class VoucherSerializer(serializers.ModelSerializer):
@@ -537,31 +483,32 @@ class VoucherSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Percentage cannot be more than 100")
         return data
 # -------------------------------
-
-# -------------------------------
 # Apply Voucher Serializer
 class ApplyVoucherSerializer(serializers.Serializer):
     code = serializers.CharField()
     order_amount = serializers.DecimalField(max_digits=10, decimal_places=2)
 
     def validate(self, data):
+        request = self.context["request"]
         try:
-            voucher = Voucher.objects.get(code=data["code"], is_active=True)
+            voucher = Voucher.objects.get(code=data["code"], user=request.user, is_active=True)
         except Voucher.DoesNotExist:
-            raise serializers.ValidationError("Invalid voucher")
+            raise Exception("Invalid voucher")
 
         if voucher.expiry_date < timezone.now():
-            raise serializers.ValidationError("Voucher expired")
+            raise Exception("Voucher expired")
 
         if voucher.is_used:
-            raise serializers.ValidationError("Voucher already used")
+            raise Exception("Voucher already used")
 
         if voucher.minimum_value and data["order_amount"] < voucher.minimum_value:
-            raise serializers.ValidationError("Minimum order value not met")
+            raise Exception("Minimum order value not met")
 
         data["voucher"] = voucher
         return data
 # -------------------------------
+
+
 
 class ProviderVerificationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -572,7 +519,7 @@ class ProviderVerificationSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         document = attrs.get("document")
         if not document:
-            raise ValidationError("Document must be submitted.")
+            raise Exception("Document must be submitted.")
         return super().validate(attrs)
     
     def to_representation(self, instance):
@@ -592,11 +539,76 @@ class ProviderVerificationSerializer(serializers.ModelSerializer):
                 }
             data["provider"] = build_user_profile(instance.provider.id, instance.provider.user)
         return data
+
+class SaveHelperProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SavedHelper
+        fields = "__all__"
+
+class ReviewAndRatingProfileSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ReviewAndRating
+        fields = "__all__"
+        read_only_fields = ["customer", "provider", "order"]
+    
+    def get_provider_data(self, instance):
+        request = self.context.get("request")
+        if instance.provider and instance.provider.user:
+            return {
+                "id": instance.provider.id,
+                "first_name": instance.provider.user.first_name,
+                "last_name": instance.provider.user.last_name,
+                "photo": request.build_absolute_uri(instance.provider.user.photo.url) if instance.provider.user.photo else None,
+            }
+        return None
+
+    def get_customer_data(self, instance):
+        request = self.context.get("request")
+        if instance.customer and instance.customer.user:
+            return {
+                "id": instance.customer.id,
+                "first_name": instance.customer.user.first_name,
+                "last_name": instance.customer.user.last_name,
+                "photo": request.build_absolute_uri(instance.customer.user.photo.url) if instance.customer.user.photo else None,
+            }
+        return None
+    
+    def clean_data(self, data):
+        data.pop("send_by", None)
+        data.pop("created", None)
+        data.pop("order", None)
+        return data
+
+    def to_representation(self, instance):
+        data = self.clean_data(super().to_representation(instance))
+        profile_type = self.context.get("profile_type")
+        
+        if profile_type == UserDefault.CUSTOMER:
+            data.pop("customer", None)
+            data["provider"] = self.get_provider_data(instance)
+        elif profile_type == UserDefault.PROVIDER:
+            data.pop("provider", None)
+            data["customer"] = self.get_customer_data(instance)
+        return data
+
+
+
+# --------------------Helper Side Serializers Start-----------------------
+class HelperWeeklyAvailabilitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HelperWeeklyAvailability
+        fields = "__all__"
+
+class ProviderEarningsViewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HelperWallet
+        fields = ["total_payout", "upcoming_payout", "available_payout", "payout_processing"]
+
+# --------------------Helper Side Serializers End-----------------------
+
 # User Info Current ===========================
 # =================================================================
-
-
-
 
 
 

@@ -1,9 +1,8 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
-from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Q
-from find_worker_config.model_choice import  UserRole, UserLanguage, UserStatus, PaymentMethodType, PayoutMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE
+from find_worker_config.model_choice import  DateStatus, DayStatus, HelperSlotExceptionType, HelperStatus, UserRole, UserLanguage, UserStatus, PaymentMethodType, PayoutMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, LogStatus
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -13,29 +12,30 @@ import random
 import string
 from encrypted_model_fields.fields import EncryptedCharField
 from django.db import transaction
+from django.core.exceptions import ValidationError
 
 
 
 # Custom User Model====================================
 class User(AbstractBaseUser, PermissionsMixin):
     role = models.CharField(max_length=30, choices=UserRole.choices, default=UserRole.USER)
+    default_profile = models.CharField(max_length=30, choices=UserDefault.choices, blank=True, null=True)
+    status = models.CharField(max_length=30, choices=UserStatus.choices, default=UserStatus.ACTIVE)
     first_name = models.CharField(max_length=30, blank=True, null=True)
     last_name = models.CharField(max_length=30, blank=True, null=True)
     username = models.CharField(max_length=50, unique=True)
     email = models.EmailField(max_length=255, unique=True, blank=True,  null=True)
     phone = models.CharField(max_length=20, unique=True, blank=True,  null=True)
     photo = models.ImageField(upload_to="user/photo/", blank=True, null=True)
-    default_profile = models.CharField(max_length=30, choices=UserDefault.choices, blank=True, null=True)
     
     is_phone_verified = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
-    status = models.CharField(max_length=30, choices=UserStatus.choices, default=UserStatus.ACTIVE)
-    helper_profile_status = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     referral_code = models.CharField(max_length=50, unique=True, blank=True, null=True, editable=False)
 
     language = models.CharField(max_length=10, choices=UserLanguage.choices, default=UserLanguage.EN)
+    timezone = models.CharField(max_length=50, default="UTC")
     date_joined = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -78,7 +78,10 @@ class User(AbstractBaseUser, PermissionsMixin):
             username = f"user{self.phone}"
         else:
             raise ValueError("Cannot generate username")
-        return username.lower()
+        username = username.lower()
+        if username and User.objects.filter(username=username).exists():
+            username = f"{username}{random.randint(1000, 9999)}"
+        return username
 
     def generate_referral_code(self):
         code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
@@ -87,7 +90,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         return code
 
     def save(self, *args, **kwargs):
-        if self.pk and User.objects.filter(pk=self.pk).exists():
+        if self.pk and self.photo and User.objects.filter(pk=self.pk).exists():
             instance = User.objects.get(pk=self.pk)
             self.image_update(instance)
         
@@ -109,20 +112,111 @@ class CustomerProfile(models.Model):
     def __str__(self):
         return f"{self.user.username} - Customer Profile"
 
+
+# ===================================================================
 # Service Provider Profile================================
 class ServiceProviderProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="service_provider_profile")
-    company_name = models.CharField(max_length=100, blank=True, null=True)
-    logo = models.ImageField(upload_to="provider/logo/", blank=True, null=True)
-    rating = models.FloatField(default=0)
-    total_jobs = models.PositiveIntegerField(default=0)
     service_category = models.ManyToManyField("task.ServiceCategory", blank=True)
-    service_subcategory = models.ManyToManyField("task.ServiceSubCategory", blank=True)
+    # service_subcategory = models.ManyToManyField("task.ServiceSubCategory", blank=True)
+
+    company_name = models.CharField(max_length=100, blank=True, null=True)
+    # email = models.EmailField(max_length=255, unique=True, blank=True,  null=True)
+    # phone = models.CharField(max_length=20, unique=True, blank=True,  null=True)
+    logo = models.ImageField(upload_to="provider/logo/", blank=True, null=True)
+    details = models.TextField(blank=True, null=True)
     office_location = models.ForeignKey("account.Address", on_delete=models.DO_NOTHING, blank=True, null=True)
+    hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    min_booking_hours = models.PositiveIntegerField(default=1)
+
+    strike_count = models.PositiveIntegerField(default=0)
+    account_status = models.CharField(max_length=20, choices=HelperStatus.choices, default=HelperStatus.GOOD)
+    availability_status = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
+
+    complete_rate = models.FloatField(default=0)
+    total_jobs = models.PositiveIntegerField(default=0)
+    rating = models.FloatField(default=0)
+    total_profile_view = models.PositiveBigIntegerField(default=0)
     
     def __str__(self):
         return f"{self.user.username} - Provider Profile"
+
+class HelperStrike(models.Model):
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="strikes")
+    reason = models.CharField(max_length=255)
+    is_active = models.BooleanField(default=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class HelperWeeklyAvailability(models.Model):
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="weekly_availability")
+    day = models.CharField(max_length=10, choices=WeekDay.choices)
+    day_status = models.CharField(max_length=20, choices=DayStatus.choices, default=DayStatus.AVAILABLE)
+
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    slot_duration_minutes = models.PositiveIntegerField(default=60)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("provider", "day")    
+        indexes = [
+            models.Index(fields=["provider", "day"]),
+        ]
+
+    def clean(self):
+        if self.start_time and self.end_time:
+            if self.start_time >= self.end_time:
+                raise ValidationError("Invalid time range")
+
+class HelperSpecialDate(models.Model):
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="special_dates")
+    date = models.DateField()
+    date_status = models.CharField(max_length=20, choices=DateStatus.choices, default=DateStatus.AVAILABLE)
+    description = models.CharField(max_length=255, blank=True, null=True)
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+
+    def clean(self):
+        if self.start_time >= self.end_time:
+            raise ValidationError("Invalid special date time range")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        if self.start_time >= self.end_time:
+            raise ValidationError("Invalid exception time range")
+
+class HelperSlotException(models.Model):
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="slot_exceptions")
+    type = models.CharField(max_length=20, choices=HelperSlotExceptionType.choices, default=HelperSlotExceptionType.BOOKED)
+    date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    reason = models.CharField(max_length=255, blank=True, null=True)
+    order = models.ForeignKey("task.Order", on_delete=models.SET_NULL, blank=True, null=True, related_name="slot_exceptions")
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    def clean(self):
+        if self.start_time >= self.end_time:
+            raise ValidationError("Invalid exception time range")
+
+
+class HelperWallet(models.Model):
+    provider = models.OneToOneField(ServiceProviderProfile, on_delete=models.CASCADE, related_name="wallet", blank=True, null=True)
+    total_payout = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    upcoming_payout = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    available_payout = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    payout_processing = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    update_at = models.DateTimeField(auto_now=True)
+
+# ============================Service Provider Profile====================
 
 
 # Address Model===========================================
@@ -172,6 +266,16 @@ class Address(models.Model):
 
     def __str__(self):
         return f"{self.address_line} for {self.user}"
+
+class SavedHelper(models.Model):
+    customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name="saved_helpers")
+    helper = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="saved_by_customers")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("customer", "helper")
+
+# ============================Address======================
 
 
 # Payment Method Model=====================================  
@@ -223,7 +327,7 @@ class CustomerPaymentMethod(models.Model):
 
 class ProviderPayoutMethod(models.Model):
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="payout_methods")
-    method_type = models.CharField(max_length=50, choices=PayoutMethodType.choices, default=PayoutMethodType.BANK)  # bank, paypal, stripe
+    method_type = models.CharField(max_length=50, choices=PayoutMethodType.choices, default=PayoutMethodType.BANK)
     account_holder_name = models.CharField(max_length=255, blank=True, null=True)
 
     # External account reference (Stripe/PayPal/etc.)
@@ -274,6 +378,9 @@ class ProviderPayoutMethod(models.Model):
                 if next_method:
                     next_method.is_default = True
                     next_method.save()
+
+# =========================Payment Method===================
+
 
 # OTP Send Model==========================================
 class OTP(models.Model):
@@ -327,24 +434,6 @@ class ProviderVerification(models.Model):
 
 
 
-# Logs Model==============================================
-class ActivityLog(models.Model):
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
-    action = models.CharField(max_length=255)
-    entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
-    entity_id = models.PositiveBigIntegerField(blank=True, null=True)
-    service = GenericForeignKey('entity_type', 'entity_id')
-    metadata = models.JSONField(default=dict)
-    ip_address = models.GenericIPAddressField()
-    created_at = models.DateTimeField(auto_now_add=True)
-    need_notify = models.BooleanField(default=False)
-
-    def __str__(self):
-        # return f"{self.user.username} {self.action} "
-        username = self.user.username if self.user else None
-        return f"{self.created_at} - {username} - {self.action}"
-
-
 # Referral & Vouchar Model========================================
 class Referral(models.Model):
     referrer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='referrer')
@@ -381,4 +470,27 @@ class Voucher(models.Model):
     def save(self, *args, **kwargs):
         if not self.code: self.code = self.generate_redeem_code()
         return super().save(*args, **kwargs)
+
+
+
+# Logs Model==============================================
+class ActivityLog(models.Model):
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    user_type = models.CharField(max_length=30, choices=UserDefault.choices, blank=True, null=True)
+    action = models.CharField(max_length=255)
+    message = models.CharField(max_length=255, blank=True, null=True)
+    status = models.CharField(max_length=20, choices=LogStatus.choices, default=LogStatus.SUCCESS)
+    
+    entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
+    entity_id = models.PositiveBigIntegerField(blank=True, null=True)
+    service = GenericForeignKey('entity_type', 'entity_id')
+    
+    ip_address = models.GenericIPAddressField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    need_notify = models.BooleanField(default=False)
+
+    def __str__(self):
+        # return f"{self.user.username} {self.action} "
+        username = self.user.username if self.user else None
+        return f"{self.created_at} - {username} - {self.action} | {self.status}"
 

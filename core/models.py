@@ -6,6 +6,8 @@ import random
 import string
 
 
+# ============================================================
+# Ticket Models Section ===================
 class Ticket(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="tickets")
     user_profile_type = models.CharField(max_length=50, choices=TicketUserProfileType.choices, blank=True, null=True)
@@ -22,6 +24,7 @@ class Ticket(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        ordering = ["-updated_at"]
         indexes = [
             models.Index(fields=["status"]),
             models.Index(fields=["created_at"]),
@@ -39,6 +42,9 @@ class TicketReply(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        ordering = ["created_at"]
+
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         self.ticket.last_message = self.message
@@ -48,6 +54,15 @@ class TicketReply(models.Model):
         self.ticket.save()
 
 
+# Ticket Models Section ===================
+# ============================================================
+
+
+# ============================================================
+# Category Views Section ===================
+
+# Category Views Section ===================
+# ============================================================
 
 
 # Site Settings Model========================================

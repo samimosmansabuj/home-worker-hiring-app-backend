@@ -8,6 +8,11 @@ from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
 from account.models import ActivityLog
 from chat_notify.models import Notification
+from ipware import get_client_ip
+from django.db import transaction
+from chat_notify.utils import push_notification
+from chat_notify.models import Notification
+
 
 class UpdateModelViewSet(ModelViewSet):
     delete_message = "Object Successfully Deleted!"
@@ -44,15 +49,16 @@ class UpdateModelViewSet(ModelViewSet):
     
     def create(self, request, *args, **kwargs):
         try:
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            self.perform_create(serializer)
-            return Response(
-                {
-                    'status': True,
-                    'data': serializer.data
-                }, status=status.HTTP_201_CREATED
-            )
+            with transaction.atomic():
+                serializer = self.get_serializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                self.perform_create(serializer)
+                return Response(
+                    {
+                        'status': True,
+                        'data': serializer.data
+                    }, status=status.HTTP_201_CREATED
+                )
         except exceptions.ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             return Response(
@@ -78,17 +84,18 @@ class UpdateModelViewSet(ModelViewSet):
     
     def update(self, request, *args, **kwargs):
         try:
-            object = self.get_object()
-            serializer = self.get_serializer(object, data=request.data, partial=True)
-            serializer.is_valid(raise_exception=True)
-            self.perform_update(serializer)
-            return Response(
-                {
-                    'status': True,
-                    'data': serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
+            with transaction.atomic():
+                object = self.get_object()
+                serializer = self.get_serializer(object, data=request.data, partial=True)
+                serializer.is_valid(raise_exception=True)
+                self.perform_update(serializer)
+                return Response(
+                    {
+                        'status': True,
+                        'data': serializer.data
+                    },
+                    status=status.HTTP_200_OK
+                )
         except exceptions.ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             return Response(
@@ -100,13 +107,14 @@ class UpdateModelViewSet(ModelViewSet):
             )
     
     def destroy(self, request, *args, **kwargs):
-        super().destroy(request, *args, **kwargs)
-        return Response(
-            {
-                'status': True,
-                'message': self.delete_message,
-            }, status=status.HTTP_200_OK
-        )
+        with transaction.atomic():
+            super().destroy(request, *args, **kwargs)
+            return Response(
+                {
+                    'status': True,
+                    'message': self.delete_message,
+                }, status=status.HTTP_200_OK
+            )
 
 class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
     def retrieve(self, request, *args, **kwargs):
@@ -140,65 +148,11 @@ class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-class LogActivityModule:
-    def get_confirm_data(self, field, field_name):
-        if not field:
-            raise Exception(f"{field_name} is missing.")
-        return field
-    
-    def __init__(self, data: dict):
-        user = data.get("user")
-        print("user: ", user)
-        if hasattr(user, "user"):
-            user = user.user
-        self.user = self.get_confirm_data(user, "User")
-        self.action = self.get_confirm_data(data.get("action"), "Action")
-        self.entity = data.get("entity")
-        self.request = self.get_confirm_data(data.get("request"), "Request")
-        self.metadata = data.get("metadata", {})
-        self.need_notify = data.get("for_notify", False)
-    
-    def get_entity_type(self):
-        if self.entity is None:
-            return None
-        elif not hasattr(self.entity, "_meta"):
-            raise Exception("Entity must be a Django model instance.")
-        else:
-            return ContentType.objects.get_for_model(self.entity)
-
-    def get_ip(self, request):
-        xff = request.META.get("HTTP_X_FORWARDED_FOR")
-        if xff:
-            return xff.split(",")[0]
-        return request.META.get("REMOTE_ADDR")
-
-    def get_data(self):
-        dict_data = {
-            "user": self.user,
-            "action": self.action,
-            "metadata": self.metadata,
-            "ip_address": self.get_ip(self.request),
-            "need_notify": self.need_notify
-        }
-        if self.entity:
-            dict_data["entity_type"] = self.get_entity_type()
-            dict_data["entity_id"] = self.entity.id
-        return dict_data
-
-    def create(self):
-        try:
-            with transaction.atomic():
-                log = ActivityLog.objects.create(
-                    **self.get_data()
-                )
-                return log
-        except Exception as e:
-            print("error: ", e)
-            raise Exception("Someting wrong for create log!")
 
 class PaymentTransactionModule:
-    def __init__(self, user, amount, reference_object, type, action, payment_information: dict={}, reference=None, currency=None, service_charge: dict={}):
+    def __init__(self, user, amount, reference_object, type, action, payment_information: dict={}, reference=None, currency=None, profile=None, service_charge: dict={}):
         self.user = user
+        self.profile = profile
         self.amount = amount
         self.payment_information = payment_information
         self.reference_object = reference_object
@@ -257,6 +211,7 @@ class PaymentTransactionModule:
             payment_transaction = PaymentTransaction.objects.create(
                 user=self.user,
                 amount=self.amount,
+                profile=self.profile,
                 payment_information=self.payment_information or {},
                 entity_type=entity_type,
                 entity_id=self.reference_object.id,
@@ -269,12 +224,7 @@ class PaymentTransactionModule:
             return True
         raise Exception("Payment Transaction not update.")
 
-# query = Q(code=otp, is_used=False, purpose=OTPType.LOGIN)
-# if phone:
-#     query &= Q(phone=phone)
-# if email:
-#     query &= Q(email=email)
-# otp_object = OTP.objects.filter(query).last()
+
 
 
 

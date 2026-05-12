@@ -1,6 +1,8 @@
+from datetime import datetime, timedelta
+
 from django.db import models
 from account.models import User, CustomerProfile, ServiceProviderProfile
-from find_worker_config.model_choice import ServiceTaskStatus, ServicePrototypeStatus, JobRequestStatus, OrderStatus, OrderRequestStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus, OrderType
+from find_worker_config.model_choice import ChangesRequestType, OrderChangesRequestStatus, OrderStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault
 from django.db import transaction
 from django.contrib.contenttypes.fields import GenericRelation, GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -8,6 +10,8 @@ import secrets
 import string
 from rest_framework.exceptions import ValidationError
 
+# ============================================================
+# Category Models Section ===================
 class ServiceCategory(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
@@ -31,9 +35,14 @@ class ServiceSubCategory(models.Model):
     def __str__(self):
         return f"{self.title} of {self.category.title}"
 
+# Category Models Section ===================
+# ============================================================
+
+
+# ============================================================
+# Order Models Section ===================
 class Order(models.Model):
     category = models.ForeignKey(ServiceCategory, on_delete=models.SET_NULL, related_name="orders", blank=True, null=True)
-    subcategory = models.ForeignKey(ServiceSubCategory, on_delete=models.SET_NULL, related_name="orders", blank=True, null=True)
     customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, related_name="orders_as_customer", blank=True, null=True)
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, related_name="orders_as_provider", blank=True, null=True)
     
@@ -42,86 +51,78 @@ class Order(models.Model):
     area = models.CharField(max_length=255)
     lat = models.DecimalField(max_digits=25, decimal_places=20, blank=True, null=True)
     lng = models.DecimalField(max_digits=25, decimal_places=20, blank=True, null=True)
-    budget_min = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    budget_max = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
-    order_type = models.CharField(max_length=20, choices=OrderType.choices, default=OrderType.MARKETPLACE)
     amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
-    status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.ACTIVE)
+    status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING)
     payment_status = models.CharField(max_length=20, choices=OrderPaymentStatus.choices, default=OrderPaymentStatus.UNPAID)
-    service_data = models.DateTimeField(blank=True, null=True)
+    working_date = models.DateField(blank=True, null=True)
+    working_start_time = models.TimeField(blank=True, null=True)
+    working_hour = models.PositiveIntegerField(default=1)
     confirmation_OTP = models.CharField(max_length=6, blank=True, null=True)
-
-    payment_transactions = GenericRelation(
-        "task.PaymentTransaction",
-        content_type_field="entity_type",
-        object_id_field="entity_id",
-        related_query_name="order"
-    )
     
+    accepted_at = models.DateTimeField(blank=True, null=True)
+    started_at = models.DateTimeField(blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def clean(self):
-        if self.order_type == OrderType.MARKETPLACE:
-            if not self.budget_min or not self.budget_max:
-                raise ValidationError("Budget is required for marketplace orders.")
-        elif self.order_type == OrderType.DIRECT:
-            if not self.amount:
-                raise ValidationError("Amount is required for direct orders.")
-
+    @property
+    def end_time(self):
+        return (datetime.combine(self.working_date, self.working_start_time) + timedelta(hours=self.working_hour)).time()
+    
+    @property
+    def end_datetime(self):
+        return datetime.combine(self.working_date, self.working_start_time) + timedelta(hours=self.working_hour)
+    
     def save(self, *args, **kwargs):
-        if self.status == OrderStatus.ACCEPT and not self.provider:
-            raise ValueError("Cannot accept order without provider")
         is_status_changed = False
         if self.pk:
             old_status = Order.objects.get(pk=self.pk).status
             is_status_changed = old_status != self.status
-        if self.payment_status == OrderPaymentStatus.PAID and self.status in [OrderStatus.ACCEPT, OrderStatus.ACTIVE]:
+        if self.payment_status == OrderPaymentStatus.PAID and self.status in [OrderStatus.ACCEPT, OrderStatus.PENDING]:
             self.status = OrderStatus.CONFIRM
-        super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
-        if (is_status_changed and self.status == OrderStatus.ACCEPT and self.provider):
-            with transaction.atomic():
-                OrderRequest.objects.filter(
-                    order=self,
-                    provider=self.provider
-                ).update(status=OrderRequestStatus.ACCEPTED)
-                OrderRequest.objects.filter(
-                    order=self
-                ).exclude(
-                    provider=self.provider
-                ).update(status=OrderRequestStatus.TERMINATE)
-
-        # if (is_status_changed and self.status == OrderStatus.ACTIVE and old_status in (OrderStatus.COMPLETED, OrderStatus.ACCEPT)):
-        if (is_status_changed and self.status == OrderStatus.ACTIVE and old_status in (OrderStatus.CONFIRM, OrderStatus.ACCEPT)):
-            with transaction.atomic():
-                OrderRequest.objects.filter(
-                    order=self
-                ).update(status=OrderRequestStatus.PENDING)
-
-class OrderRequest(models.Model):
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="order_requests", blank=True, null=True)
-    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="provider_order")
-    message = models.TextField(blank=True)
-    budget = models.DecimalField(max_digits=10, decimal_places=2)
-    status = models.CharField(max_length=20, choices=OrderRequestStatus.choices, default=OrderRequestStatus.PENDING)
-    updated_at = models.DateTimeField(auto_now=True)
+class OrderAttachment(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="order_attachments")
+    file = models.FileField(upload_to="order/file/", blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        ordering = ["-created_at"]
+
+class OrderChangesRequest(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="changes_requests")
+    request_by = models.CharField(max_length=20, default=UserDefault.CUSTOMER, choices=UserDefault.choices)
+    status = models.CharField(max_length=20, choices=OrderChangesRequestStatus.choices, default=OrderChangesRequestStatus.NO_RESPONSE)
+    changes_type = models.CharField(max_length=30, choices=ChangesRequestType.choices, default=ChangesRequestType.AMOUNT)
+    changes_data = models.JSONField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+# Order Models Section ===================
+# ============================================================
+
+
+
 class ReviewAndRating(models.Model):
-    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="order_review")
-    customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, blank=True, null=True)
-    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, blank=True, null=True)
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="order_review")
+    customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, blank=True, null=True, related_name="customer_reviews")
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.SET_NULL, blank=True, null=True, related_name="provider_reviews")
+    send_by = models.CharField(max_length=20, default=UserDefault.CUSTOMER, choices=UserDefault.choices)
+
     rating = models.IntegerField(choices=ReviewRatingChoice.choices, default=ReviewRatingChoice.FIVE)
     review = models.CharField(max_length=255, blank=True, null=True)
-    created = models.DateTimeField(auto_now=True)
+    is_approved = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 class OrderRefundRequest(models.Model):
     order = models.OneToOneField(Order, on_delete=models.SET_NULL, related_name="refund_request", blank=True, null=True)
     customer = models.ForeignKey(CustomerProfile, on_delete=models.SET_NULL, related_name="refund_requests", blank=True, null=True)
-    reason = models.TextField()
+    reason = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=RefundStatus.choices, default=RefundStatus.PENDING)
+    order_amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     refund_amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     admin_note = models.TextField(blank=True, null=True)
     processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="processed_refunds")
@@ -160,20 +161,27 @@ class AdminWallet(models.Model):
     def __str__(self):
         return f"Payment Balance: {self.payment_balance} | Current Balance: {self.current_balance} | Hold Balance: {self.hold_balance} | Total Withdraw: {self.total_withdraw}"
 
-
 class PaymentTransaction(models.Model):
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True)
+    # related object fields 
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
+    profile = models.CharField(max_length=15, choices=UserDefault.choices, blank=True, null=True)
+    order = models.ForeignKey(Order, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
+
+    # payment and transaction fields
     payment_id = models.CharField(max_length=50, blank=True, null=True, unique=True, editable=False)
     transaction_id = models.CharField(max_length=50, blank=True, null=True, unique=True, editable=False)
     amount = models.DecimalField(max_digits=9, decimal_places=2)
     currency = models.CharField(max_length=20, choices=PaymentCurrencyType.choices, default=PaymentCurrencyType.CA)
-    type = models.CharField(max_length=20, choices=PaymentTransactionType.choices)
     payment_information = models.JSONField(blank=True, null=True)
-    reference = models.CharField(max_length=255, blank=True, null=True)
+
+    # object related fields------
+    type = models.CharField(max_length=20, choices=PaymentTransactionType.choices)
     action = models.CharField(max_length=50, choices=PaymentAction.choices, blank=True, null=True)
+    reference = models.CharField(max_length=255, blank=True, null=True)
+
     # reference object------
     entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
-    entity_id = models.PositiveBigIntegerField()
+    entity_id = models.PositiveBigIntegerField(blank=True, null=True)
     service = GenericForeignKey('entity_type', 'entity_id')
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -198,4 +206,5 @@ class PaymentTransaction(models.Model):
 
 # ============= Payment transaction & Wallet Section End=============================
 # ==========================================================================================
+
 
