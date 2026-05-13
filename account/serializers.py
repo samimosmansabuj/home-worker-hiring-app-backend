@@ -6,7 +6,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from task.models import ReviewAndRating
 from .models import HelperWallet, HelperWeeklyAvailability, SavedHelper, User, OTP, Address, CustomerProfile, ServiceProviderProfile, ProviderVerification, Referral, Voucher, CustomerPaymentMethod, ProviderPayoutMethod, User
 from .utils import generate_otp
-from find_worker_config.model_choice import OTPType, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, OrderStatus, UserDefault
+from find_worker_config.model_choice import OTPType, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, OrderStatus, UserDefault, UserStatus
 from django.core.exceptions import ObjectDoesNotExist
 from find_worker_config.model_choice import UserRole
 from django.contrib.auth import get_user_model
@@ -34,16 +34,6 @@ from django.core.files.base import ContentFile
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def get_user(self):
         return self.user
-
-class AdminLoginSerializer(TokenObtainPairSerializer):
-    def validate(self, attrs):
-        data = super().validate(attrs)
-
-        if self.user.role != UserRole.ADMIN:
-            raise serializers.ValidationError(
-                {"detail": "You are not authorized as admin."}
-            )
-        return data
 
 class LoginOTPRequestSerializer(serializers.Serializer):
     phone = serializers.CharField(required=False, allow_blank=True)
@@ -100,13 +90,7 @@ class LoginOTPVerifySerializer(serializers.Serializer):
             "refresh": str(refresh),
             "default_profile": user.default_profile
         }
-<<<<<<< HEAD
-
-
-# Login With OTP End===========================
-=======
 # Login With OTP End============================
->>>>>>> 9d9a19e1fdbe9afb43a69b175148d7911222c4e2
 # =================================================================
 
 # =================================================================
@@ -662,4 +646,3 @@ class ProviderPayoutMethodSerializer(serializers.ModelSerializer):
         )
 # Payment & Payout method ===========================
 # =================================================================
-

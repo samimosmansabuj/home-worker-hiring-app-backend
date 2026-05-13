@@ -1,5 +1,5 @@
 from account.models import HelperSlotException, Address, User
-from .serializers import ServiceCategorySerializer, ServiceSubCategorySerializer, ReviewAndRatingSerializer, PaymentTransactionSerializer, CompleteSerializer, CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, SetHourSerializer, OrderSerializerAll, StartWorkSerializer, ReviewAndRatingSerializer, OrderRefundRequestSerializer
+from .serializers import ServiceCategorySerializer, ServiceSubCategorySerializer, ReviewAndRatingSerializer, PaymentTransactionSerializer, CompleteSerializer, CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, SetHourSerializer, OrderSerializerAll, StartWorkSerializer, ReviewAndRatingSerializer
 from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet
 from .models import ServiceCategory, ServiceSubCategory, Order, ReviewAndRating, PaymentTransaction, OrderRefundRequest, OrderChangesRequest
 from rest_framework.decorators import action
@@ -1126,48 +1126,10 @@ class ProviderOrderViewSet(UpdateModelViewSet):
 
 
 
-
-
-
 class ReviewAndRatingViewSets(UpdateModelViewSet):
     queryset = ReviewAndRating.objects.all()
     serializer_class = ReviewAndRatingSerializer
     permission_classes = [ForCustomerProfile]
-
-class AdminOrderViewSet(UpdateModelViewSet):
-    queryset = Order.objects.all()
-    serializer_class = OrderSerializerAll
-    permission_classes = [ForAdminProfile]
-
-    @action(detail=True, methods=["post"], url_path="pay-provider")
-    def pay_provider(self, request, pk=None):
-        order = self.get_object()
-
-        if order.status != OrderStatus.COMPLETED:
-            raise ValidationError("Order not completed")
-
-        if order.payment_status != OrderPaymentStatus.PAID:
-            raise ValidationError("Payment not received")
-
-        PaymentTransactionModule(
-            user=order.provider.user,
-            amount=order.amount,
-            reference_object=order,
-            type=PaymentTransactionType.DEBIT,
-            action=PaymentAction.SEND_PROVIDER
-        ).payment_transaction()
-
-        order.payment_status = OrderPaymentStatus.DISBURSEMENT
-        order.save(update_fields=["payment_status"])
-
-        return Response({
-            "status": True,
-            "message": "Payment sent to provider"
-        })
-
-
-
-
 
 
 
@@ -1197,102 +1159,6 @@ class PaymentTransactionViewSets(UpdateReadOnlyModelViewSet):
         else:
             raise Exception("Payment transaction not get for the user.")
         return pt
-
-class OrderRefundViewSets(UpdateReadOnlyModelViewSet):
-    queryset = OrderRefundRequest.objects.all()
-    serializer_class = OrderRefundRequestSerializer
-    permission_classes = [ForAdminProfile]
-
-    def create_log(self, action, entity=None, for_notify=False, user=None, metadata={}):
-        data = {
-            "user": user or self.request.user,
-            "action": action,
-            "entity": entity,
-            "request": self.request,
-            "for_notify": for_notify,
-            "metadata": metadata,
-        }
-        log = LogActivityModule(data)
-        log.create()
-
-    @action(detail=True, methods=["post"], url_path="action")
-    def method_admin_action(self, request, *args, **kwargs):
-        try:
-            with transaction.atomic():
-                refund_object = self.get_object()
-
-                serializer = OrderRefundRequestActionSerializer(data=request.data)
-                serializer.is_valid(raise_exception=True)
-                refund_status = serializer.validated_data["status"]
-                admin_note = serializer.validated_data["admin_note"]
-                
-                if refund_object.status == refund_status:
-                    raise Exception(f"Order is already at {refund_object.status}")
-                if refund_status in [RefundStatus.APPROVED, RefundStatus.REJECTED]:
-                    # Refund Object Update----
-                    refund_object.status = refund_status
-                    refund_object.processed_by = request.user
-                    refund_object.processed_at = timezone.now()
-                    self.create_log(
-                        f"Refund {refund_status}", entity=refund_object, for_notify=True, user=refund_object.customer.user,
-                        metadata={"reference_object_id": refund_object.order.id, "reference_object_type": "Order"}
-                    )
-                elif refund_status == RefundStatus.COMPLETED and refund_object.status == RefundStatus.APPROVED:
-                    trnx_id = serializer.validated_data.get("trnx_id" or None)
-                    amount = serializer.validated_data.get("amount" or None)
-                    if amount and refund_object.refund_amount != amount:
-                        raise Exception("Order Amount not same!")
-                    if not trnx_id:
-                        raise Exception("Transaction ID must be submited.")
-                    # Refund Object Update----
-                    refund_object.status = refund_status
-                    refund_object.processed_by = request.user
-                    refund_object.processed_at = timezone.now()
-                    order = refund_object.order
-                    # Order Object Update----
-                    order.status = OrderStatus.REFUND
-                    order.payment_status = OrderPaymentStatus.REFUND
-                    order.save()
-                    # Payment Transaction----
-                    payment = PaymentTransactionModule(
-                        user=refund_object.customer.user,
-                        amount=refund_object.refund_amount,
-                        reference_object=refund_object,
-                        type=PaymentTransactionType.DEBIT,
-                        action=PaymentAction.REFUND_CUSTOMER
-                    )
-                    payment.payment_transaction()
-                    self.create_log(
-                        f"Refund {refund_status}", entity=refund_object, for_notify=True, user=refund_object.customer.user,
-                        metadata={"reference_object_id": refund_object.order.id, "reference_object_type": "Order"}
-                    )
-                else:
-                    raise Exception(f"Your order is {refund_object.status} and can't update right now!")
-                
-                if admin_note:
-                    refund_object.admin_note = admin_note
-                refund_object.save()
-                return Response(
-                    {
-                        "status": True,
-                        "message": f"Refund Status Update at {refund_status}"
-                    }, status=status.HTTP_200_OK
-                )
-        except ValidationError:
-            error = {key: str(value[0]) for key, value in serializer.errors.items()}
-            return Response(
-                {
-                    "status": False,
-                    "message": error
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
-            )
 
 # =================== Payment transaction Section Start===================================
 # ==========================================================================================

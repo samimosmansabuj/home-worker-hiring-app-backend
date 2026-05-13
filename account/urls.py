@@ -1,13 +1,9 @@
 from django.urls import path, include
 from .views import (
-<<<<<<< HEAD
-    PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpOTPRequestView, SignUpOTPVerifyView, UserInfoView, UserAddressViews, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, ProviderVerificationViews, GoogleLoginAPIView, HelperListViewset, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView, ProviderAddressUpdateView, AdminAuthViews
-=======
     GetMyReferralCodeView, HelperWeeklyAvailabilityViewSet, MyActivityViews, NextJobOrdersView, ProviderEarningsTransactionsView, ProviderEarningsView, RecommendationHelperViewSet, ReviewAndRatingProfileViewSet, UserAddressViews, ProviderVerificationViews, CustomerPaymentMethodViewSet, ProviderPayoutMethodViewSet, UserDefaultLanguage, MyReferralViewSet, MyVoucherViewSet, ApplyVoucherView, ProviderAddressUpdateView, CurrentUserInfoView, CurrentUserHelperView, CreateUserHelperView, SaveHelperProfileViews
 )
 from .auth_views import (
     PasswordLoginViews, LoginOTPRequestView, LoginOTPVerifyView, SignUpViews, UpdateTokenVerifyView, UpdateTokenRefreshView,ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView, UserSignUpOTPVerifyView, GoogleLoginAPIView, SignUpOTPResend
->>>>>>> 9d9a19e1fdbe9afb43a69b175148d7911222c4e2
 )
 from rest_framework.routers import DefaultRouter
 
@@ -31,11 +27,7 @@ router.register(r"recommended-helpers", RecommendationHelperViewSet, basename="m
 
 
 urlpatterns = [
-<<<<<<< HEAD
-    path("admin/token/auth/", AdminAuthViews.as_view(), name="admin-login"),
-=======
     # ========================================================================================================
->>>>>>> 9d9a19e1fdbe9afb43a69b175148d7911222c4e2
     # Auth Route For All User--------------
     path("token/auth/", PasswordLoginViews.as_view(), name="user_login"),
     path("token/otp/request/", LoginOTPRequestView.as_view(), name="login_otp_send"),

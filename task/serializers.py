@@ -486,29 +486,6 @@ class ReviewAndRatingSerializer(serializers.ModelSerializer):
             validated_data["send_by"] = send_by
             return super().create(validated_data)
 
-# Not Work Yet--
-class OrderRefundRequestSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = OrderRefundRequest
-        fields = "__all__"
-        read_only_fields = ["customer", "order"]
-
-    def validate(self, attrs):
-        request = self.context["request"]
-        order = self.context["order"]
-
-        if order.customer != request.user.hasCustomerProfile:
-            raise ValidationError("Not allowed")
-
-        if order.payment_status != OrderPaymentStatus.PAID:
-            raise ValidationError("Order not paid")
-
-        attrs["customer"] = request.user.hasCustomerProfile
-        attrs["order"] = order
-
-        return attrs
-
 # ==================================================================
 # =================== Order Section End===================================
 # ==========================================================================================

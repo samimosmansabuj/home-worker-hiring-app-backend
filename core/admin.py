@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Ticket, TicketReply, AddOfferVoucher
+from .models import Ticket, TicketReply, AddOfferVoucher, AdminWallet
 # from unfold.admin import ModelAdmin
 
 
@@ -20,3 +20,4 @@ from .models import Ticket, TicketReply, AddOfferVoucher
 admin.site.register(Ticket)
 admin.site.register(TicketReply)
 admin.site.register(AddOfferVoucher)
+admin.site.register(AdminWallet)

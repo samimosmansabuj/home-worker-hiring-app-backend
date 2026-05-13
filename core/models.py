@@ -136,3 +136,16 @@ class AddOfferVoucher(models.Model):
         if not self.code: self.code = self.generate_redeem_code()
         return super().save(*args, **kwargs)
 
+
+class AdminWallet(models.Model):
+    current_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    payment_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    hold_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_withdraw = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    update_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Payment Balance: {self.payment_balance} | Current Balance: {self.current_balance} | Hold Balance: {self.hold_balance} | Total Withdraw: {self.total_withdraw}"
+

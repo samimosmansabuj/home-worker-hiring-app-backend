@@ -8,7 +8,7 @@ from find_worker_config.model_choice import UserRole, TicketStatus, LogStatus, U
 from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
 from django.db import transaction
 from rest_framework.views import APIView
-from task.models import AdminWallet
+from .models import AdminWallet
 from find_worker_config.permissions import IsAdminWritePermissionOnly
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAdminUser

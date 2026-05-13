@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import Ticket, TicketReply, TicketSenderType, SignUpSlider, CustomerScreenSlide
 from find_worker_config.model_choice import OrderStatus
-from task.models import AdminWallet
+from .models import AdminWallet
 from django.db import transaction
 from account.models import ServiceProviderProfile
 

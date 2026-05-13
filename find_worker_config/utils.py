@@ -3,7 +3,8 @@ from rest_framework import status, exceptions
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from find_worker_config.model_choice import PaymentCurrencyType, PaymentTransactionType, ServiceChargeType, PaymentAction
-from task.models import PaymentTransaction, AdminWallet
+from task.models import PaymentTransaction
+from core.models import AdminWallet
 from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
 from account.models import ActivityLog
@@ -150,7 +151,7 @@ class UpdateReadOnlyModelViewSet(ReadOnlyModelViewSet):
 
 
 class PaymentTransactionModule:
-    def __init__(self, user, amount, reference_object, type, action, payment_information: dict={}, reference=None, currency=None, profile=None, service_charge: dict={}):
+    def __init__(self, user, amount, reference_object, type, action, payment_information: dict={}, transaction_id=None, reference=None, currency=None, profile=None, service_charge: dict={}):
         self.user = user
         self.profile = profile
         self.amount = amount
@@ -161,6 +162,7 @@ class PaymentTransactionModule:
         self.reference = reference
         self.currency = currency or PaymentCurrencyType.CA
         self.service_charge = service_charge
+        self.transaction_id = transaction_id
     
     def get_wallet(self):
         wallet, _ = AdminWallet.objects.get_or_create()
@@ -212,6 +214,7 @@ class PaymentTransactionModule:
                 user=self.user,
                 amount=self.amount,
                 profile=self.profile,
+                transaction_id=self.transaction_id,
                 payment_information=self.payment_information or {},
                 entity_type=entity_type,
                 entity_id=self.reference_object.id,

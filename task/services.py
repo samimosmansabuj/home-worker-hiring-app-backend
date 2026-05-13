@@ -1,5 +1,6 @@
 from django.db import transaction
-from .models import Order, AdminWallet, PaymentTransaction
+from .models import Order, PaymentTransaction
+from core.models import AdminWallet
 from find_worker_config.model_choice import OrderStatus, RefundStatus, PaymentTransactionType, PaymentAction, OrderPaymentStatus
 from django.utils import timezone
 
