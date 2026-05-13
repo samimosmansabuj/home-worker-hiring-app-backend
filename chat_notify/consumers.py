@@ -1,7 +1,7 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from .models import ChatMessage, ChatRoom, Attachment, CustomOffer
+from .models import ChatMessage, ChatRoom
 from django.core.exceptions import ObjectDoesNotExist
 import base64
 from django.core.files.base import ContentFile
@@ -10,7 +10,6 @@ from channels.exceptions import DenyConnection
 from find_worker_config.model_choice import SendMessageType
 from .serializers import ChatMessageSerializer
 from find_worker_config.model_choice import UserDefault
-import mimetypes
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -67,49 +66,31 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'message_id': message_id
             }
         elif message_type in [SendMessageType.IMAGE, SendMessageType.VIDEO, SendMessageType.AUDIO, SendMessageType.FILE]:
-            file_path = data.get("file")
-            file_name = data.get("file_name")
-            print("file_path: ", file_path)
-
-            file = self._abs_url(file_path)
-            print("file: ", file)
+            # {url, mime, name, size}
+            attachment_size = data.get("attachment_size")
+            attachment_name = data.get("attachment_name", "uploaded_image.png")
+            raw_file = data.get("raw_file")
             
-
-            # print("file: ", file)
-            # if file:
-            #     header, base64_data = file.split(',', 1)
-            #     file = ContentFile(base64.b64decode(base64_data), name=file_name)
-
-
-            ok = await self.save_message_with_attachment(message, file, message_type)
-            if not ok:
-                return
-            user = ok.get("user")
-            photo = ok.get("photo")
-            message = ok.get("message")
-            attachment = ok.get("attachment")
+            if raw_file:
+                header, base64_data = raw_file.split(',', 1)
+                file = ContentFile(base64.b64decode(base64_data), name=attachment_name)
+            
+            ok = await self.save_message_with_attachment(message, file, attachment_size, message_type)
+            
             payload = {
                 'type': 'chat_message',
-                "id": message.id,
-                "sender": message.sender,
-                "message_type": message.message_type,
-                "content": message.content,
-                "timestamp": message.timestamp.isoformat(),
-                "is_read": message.is_read,
-                "attachments": [
-                    {
-                        'file': attachment.file,
-                        'mime': attachment.mime,
-                        'name': attachment.name,
-                        'size': attachment.size,
-                    }
-                ],
-                'sender_data': {
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "photo": photo,
-                    "user": user.role,
+                'message_type': message_type,
+                'message': message,
+                'message_id': ok["message_id"],
+                'attachment': {
+                    'url': self._abs_url(ok['url']),
+                    'mime': ok.get('mime', ''),
+                    'name': ok.get('name', ''),
+                    'size': ok.get('size', 0),
                 },
+                'sender': ok["username"],
+                'sender_id': ok["id"],
+                'sender_profile': self._abs_url(ok["profile"]),
             }
         elif message_type == SendMessageType.TEXT:
             if not message:
@@ -136,9 +117,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "user": user.role,
                 },
             }
-        elif message_type == SendMessageType.OFFER:
-            order_id = data.get("order_id")
-            changes_id = data.get("changes_id")
         
         await self.channel_layer.group_send(
             self.room_group_name, payload
@@ -159,37 +137,40 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return None
     
     @database_sync_to_async
-    def save_message_with_attachment(self, message, file, message_type):
+    def save_message_with_attachment(self, message, file, file_size, msg_type):
         user = self.scope['user']
         try:
-            room = ChatRoom.objects.get(uuid=self.roomId)
+            room = ChatRoom.objects.get(id=self.roomId)
         except ObjectDoesNotExist:
             return False
         
-        if not file: False
+        if not file:
+            False
         # ALLOWED_MIME_PREFIXES = ("image/", "video/", "audio/", "pdf/")  # files allowed too, see below
         MAX_FILE_MB = 25
-        if file.size > MAX_FILE_MB * 1024 * 1024: return False
-
-        file_mime, _ = mimetypes.guess_type(file.name)
         
-        msg = ChatMessage.objects.create(sender=self.profileType, room=room, content=message, message_type=message_type)
+        if file_size > MAX_FILE_MB * 1024 * 1024:
+            return False
+        msg = ChatMessage.objects.create(sender=user, room=room, content=message, type=msg_type)
+        
         att = Attachment.objects.create(
             message=msg,
             file=file,
-            mime=file_mime or "",
+            mime=msg_type,
             name=getattr(file, "name", ""),
-            size=file.size,
+            size=file_size,
         )
 
-        photo = ""
-        pic = getattr(user, "photo", None) if user else None
+        profile_url = ''
+        client_user = getattr(user, 'client_user', None)
+        pic = getattr(client_user, 'profile_picture', None) if client_user else None
         if pic:
             try:
-                photo = pic.url
+                profile_url = pic.url
             except Exception:
-                photo = ""
-        return {"user": user, "photo": photo, "message": msg, "attachment": att}
+                profile_url = ''
+
+        return {'id': user.id, 'username': user.username, 'profile': profile_url, "url": att.file.url, "mime": att.mime, "name": att.name, "size": att.size, 'message_id': msg.pk}
     
     @database_sync_to_async
     def save_message(self, message, message_type):

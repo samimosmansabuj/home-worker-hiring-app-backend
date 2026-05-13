@@ -19,9 +19,7 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
 class MessageCustomOfferSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomOffer
-        # fields = "__all__"
-        exclude = ["message"]
-        depth = True
+        fields = "__all__"
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     attachments = MessageAttachmentSerializer(many=True, required=False)
