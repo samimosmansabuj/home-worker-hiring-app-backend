@@ -43,6 +43,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     REQUIRED_FIELDS = ["username", "phone"]
 
     objects = CustomUserManager()
+    
+    @property
+    def full_name(self):
+        return (
+            f"{self.first_name or ''} {self.last_name or ''}"
+        ).strip()
 
     @property
     def hasCustomerProfile(self):
@@ -108,6 +114,34 @@ class CustomerProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="customer_profile")
     rating = models.FloatField(default=0)
     total_orders = models.PositiveIntegerField(default=0)
+    completed_orders = models.PositiveIntegerField(default=0)
+    cancelled_orders = models.PositiveIntegerField(default=0)
+    total_spent = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    is_verified = models.BooleanField(default=False)
+    is_blocked = models.BooleanField(default=False)
+    blocked_reason = models.TextField(blank=True, null=True)
+    last_order_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    @property
+    def completion_rate(self):
+        if self.total_orders == 0:
+            return 0
+        return round(
+            (self.completed_orders / self.total_orders) * 100,
+            2
+        )
+
+    class Meta:
+        db_table = "customer_profiles"
+        ordering = ["-id"]
+        indexes = [
+            models.Index(fields=["rating"]),
+            models.Index(fields=["total_orders"]),
+            models.Index(fields=["is_verified"]),
+            models.Index(fields=["is_blocked"]),
+        ]
 
     def __str__(self):
         return f"{self.user.username} - Customer Profile"
@@ -139,6 +173,28 @@ class ServiceProviderProfile(models.Model):
     rating = models.FloatField(default=0)
     total_profile_view = models.PositiveBigIntegerField(default=0)
     
+    # rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
+    # total_jobs = models.PositiveIntegerField(default=0)
+    # completed_jobs = models.PositiveIntegerField(default=0)
+    # cancelled_jobs = models.PositiveIntegerField(default=0)
+    # total_profile_view = models.PositiveBigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    # @property
+    # def completion_rate(self):
+    #     if self.total_jobs == 0:
+    #         return 0
+    #     return round((self.completed_jobs / self.total_jobs) * 100, 2)
+    
+    class Meta:
+        db_table = "service_provider_profiles"
+        indexes = [
+            models.Index(fields=["is_verified"]),
+            models.Index(fields=["availability_status"]),
+            models.Index(fields=["rating"]),
+            models.Index(fields=["account_status"]),
+        ]
+    
     def __str__(self):
         return f"{self.user.username} - Provider Profile"
 
@@ -148,7 +204,6 @@ class HelperStrike(models.Model):
     is_active = models.BooleanField(default=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
 
 class HelperWeeklyAvailability(models.Model):
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="weekly_availability")
@@ -180,15 +235,11 @@ class HelperSpecialDate(models.Model):
     description = models.CharField(max_length=255, blank=True, null=True)
     start_time = models.TimeField(null=True, blank=True)
     end_time = models.TimeField(null=True, blank=True)
-
-    def clean(self):
-        if self.start_time >= self.end_time:
-            raise ValidationError("Invalid special date time range")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def clean(self):
         if self.start_time >= self.end_time:
-            raise ValidationError("Invalid exception time range")
+            raise ValidationError("Invalid special date time range")
 
 class HelperSlotException(models.Model):
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="slot_exceptions")
@@ -204,7 +255,6 @@ class HelperSlotException(models.Model):
     def clean(self):
         if self.start_time >= self.end_time:
             raise ValidationError("Invalid exception time range")
-
 
 class HelperWallet(models.Model):
     provider = models.OneToOneField(ServiceProviderProfile, on_delete=models.CASCADE, related_name="wallet", blank=True, null=True)

@@ -20,10 +20,12 @@ CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "*").split(",")
 INSTALLED_APPS = [
     'channels', 'daphne',
     # 'django.contrib.sites',
-
-    # "unfold",  # before django.contrib.admin
-    # "unfold.contrib.filters",  # optional, if special filters are needed
-    # "unfold.contrib.forms",  # optional, if special form elements are needed
+    
+    "unfold",
+    "unfold.contrib.filters",
+    "unfold.contrib.forms",
+    "unfold.contrib.inlines",
+    "unfold.contrib.import_export",
 
     'django.contrib.admin',
     'django.contrib.auth',
@@ -31,6 +33,10 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    
+    "import_export",
+    "simple_history",
+    "auditlog",
 
     # library app
     'rest_framework', 'rest_framework_simplejwt',
@@ -119,47 +125,161 @@ SPECTACULAR_SETTINGS = {
 # ==================== Rest Frame Work Configurations End====================
 # ================================================================================
 
+    
+UNFOLD = {
+    "SITE_TITLE": "Worker Hiring Admin",
+    "SITE_HEADER": "Control Center",
+    "SITE_SUBHEADER": "Enterprise Operations Dashboard",
+    "SITE_SYMBOL": "engineering",
 
-# UNFOLD = {
-#     "SITE_TITLE": "Worker Hiring Admin",
-#     "NAVIGATION": [
-#         {
-#             "title": "User Management",
-#             "items": [
-#                 {"title": "Users", "link": "/admin/account/user/"},
-#                 {"title": "Providers", "link": "/admin/account/serviceproviderprofile/"},
-#             ],
-#         },
-#         {
-#             "title": "Orders",
-#             "items": [
-#                 {"title": "Orders", "link": "/admin/task/order/"},
-#                 {"title": "Change Requests", "link": "/admin/task/orderchangesrequest/"},
-#                 {"title": "Refunds", "link": "/admin/task/orderrefundrequest/"},
-#             ],
-#         },
-#         {
-#             "title": "Communication",
-#             "items": [
-#                 {"title": "Chats", "link": "/admin/chat/chatroom/"},
-#                 {"title": "Messages", "link": "/admin/chat/chatmessage/"},
-#                 {"title": "Notifications", "link": "/admin/chat/notification/"},
-#             ],
-#         },
-#         {
-#             "title": "Finance",
-#             "items": [
-#                 {"title": "Transactions", "link": "/admin/task/paymenttransaction/"},
-#             ],
-#         },
-#         {
-#             "title": "Support",
-#             "items": [
-#                 {"title": "Tickets", "link": "/admin/core/ticket/"},
-#             ],
-#         },
-#     ]
-# }
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+
+    "DASHBOARD": "chat_notify.admin.dashboard.chat.ChatControlDashboard",
+
+    "COLORS": {
+        "primary": {
+            "50": "240 249 255",
+            "100": "224 242 254",
+            "200": "186 230 253",
+            "300": "125 211 252",
+            "400": "56 189 248",
+            "500": "14 165 233",
+            "600": "2 132 199",
+            "700": "3 105 161",
+            "800": "7 89 133",
+            "900": "12 74 110",
+        },
+    },
+
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+
+        "navigation": [
+            {
+                "title": "Identity & Users",
+                "separator": True,
+                "items": [
+                    {"title": "Users", "link": "/admin/account/user/"},
+                    {"title": "Customers", "link": "/admin/account/customerprofile/"},
+                    {"title": "Providers", "link": "/admin/account/serviceproviderprofile/"},
+                    {"title": "Addresses", "link": "/admin/account/address/"},
+                    {"title": "Saved Helpers", "link": "/admin/account/savedhelper/"},
+                ],
+            },
+
+            {
+                "title": "Marketplace Engine",
+                "separator": True,
+                "items": [
+                    {"title": "Categories", "link": "/admin/task/servicecategory/"},
+                    {"title": "Sub Categories", "link": "/admin/task/servicesubcategory/"},
+                    {"title": "Orders", "link": "/admin/task/order/"},
+                    {"title": "Order Changes", "link": "/admin/task/orderchangesrequest/"},
+                    {"title": "Reviews", "link": "/admin/task/reviewandrating/"},
+                    {"title": "Refund Requests", "link": "/admin/task/orderrefundrequest/"},
+                ],
+            },
+
+            {
+                "title": "Communication Hub",
+                "separator": True,
+                "items": [
+                    {"title": "Chat Rooms", "link": "/admin/chat_notify/chatroom/"},
+                    {"title": "Messages", "link": "/admin/chat_notify/chatmessage/"},
+                    {"title": "Notifications", "link": "/admin/chat_notify/notification/"},
+                    {"title": "Tickets", "link": "/admin/core/ticket/"},
+                ],
+            },
+
+            {
+                "title": "Finance Engine",
+                "separator": True,
+                "items": [
+                    {"title": "Transactions", "link": "/admin/task/paymenttransaction/"},
+                    {"title": "Provider Wallet", "link": "/admin/account/helperwallet/"},
+                    {"title": "Admin Wallet", "link": "/admin/core/adminwallet/"},
+                ],
+            },
+
+            {
+                "title": "System & Operations",
+                "separator": True,
+                "items": [
+                    {"title": "OTP Logs", "link": "/admin/account/otp/"},
+                    {"title": "Provider Verification", "link": "/admin/account/providerverification/"},
+                    {"title": "Referrals", "link": "/admin/account/referral/"},
+                    {"title": "Vouchers", "link": "/admin/account/voucher/"},
+                    {"title": "Activity Logs", "link": "/admin/account/activitylog/"},
+                    {"title": "CMS Slides", "link": "/admin/core/signupslider/"},
+                    {"title": "Customer Slides", "link": "/admin/core/customerscreenslide/"},
+                ],
+            },
+        ]
+        # "navigation": [
+        #     {
+        #         "title": "Identity & Users",
+        #         "separator": True,
+        #         "items": [
+        #             {"title": "Users", "icon": "users", "link": "/admin/account/user/"},
+        #             {"title": "Customers", "icon": "user", "link": "/admin/account/customerprofile/"},
+        #             {"title": "Providers", "icon": "briefcase", "link": "/admin/account/serviceproviderprofile/"},
+        #             {"title": "Addresses", "icon": "map", "link": "/admin/account/address/"},
+        #             {"title": "Saved Helpers", "icon": "bookmark", "link": "/admin/account/savedhelper/"},
+        #         ],
+        #     },
+
+        #     {
+        #         "title": "Marketplace Engine",
+        #         "separator": True,
+        #         "items": [
+        #             {"title": "Categories", "icon": "folder", "link": "/admin/task/servicecategory/"},
+        #             {"title": "Sub Categories", "icon": "layers", "link": "/admin/task/servicesubcategory/"},
+        #             {"title": "Orders", "icon": "shopping-cart", "link": "/admin/task/order/"},
+        #             {"title": "Order Changes", "icon": "refresh", "link": "/admin/task/orderchangesrequest/"},
+        #             {"title": "Reviews", "icon": "star", "link": "/admin/task/reviewandrating/"},
+        #             {"title": "Refund Requests", "icon": "rotate-ccw", "link": "/admin/task/orderrefundrequest/"},
+        #         ],
+        #     },
+
+        #     {
+        #         "title": "Communication Hub",
+        #         "separator": True,
+        #         "items": [
+        #             {"title": "Chat Rooms", "icon": "message", "link": "/admin/chat_notify/chatroom/"},
+        #             {"title": "Messages", "icon": "mail", "link": "/admin/chat_notify/chatmessage/"},
+        #             {"title": "Notifications", "icon": "bell", "link": "/admin/chat_notify/notification/"},
+        #             {"title": "Tickets", "icon": "help-circle", "link": "/admin/core/ticket/"},
+        #         ],
+        #     },
+
+        #     {
+        #         "title": "Finance Engine",
+        #         "separator": True,
+        #         "items": [
+        #             {"title": "Transactions", "icon": "credit-card", "link": "/admin/task/paymenttransaction/"},
+        #             {"title": "Provider Wallet", "icon": "wallet", "link": "/admin/account/helperwallet/"},
+        #             {"title": "Admin Wallet", "icon": "building-2", "link": "/admin/core/adminwallet/"},
+        #         ],
+        #     },
+
+        #     {
+        #         "title": "System & Operations",
+        #         "separator": True,
+        #         "items": [
+        #             {"title": "OTP Logs", "icon": "key", "link": "/admin/account/otp/"},
+        #             {"title": "Provider Verification", "icon": "shield-check", "link": "/admin/account/providerverification/"},
+        #             {"title": "Referrals", "icon": "link", "link": "/admin/account/referral/"},
+        #             {"title": "Vouchers", "icon": "gift", "link": "/admin/account/voucher/"},
+        #             {"title": "Activity Logs", "icon": "activity", "link": "/admin/account/activitylog/"},
+        #             {"title": "CMS Slides", "icon": "image", "link": "/admin/core/signupslider/"},
+        #             {"title": "Customer Slides", "icon": "image", "link": "/admin/core/customerscreenslide/"},
+        #         ],
+        #     },
+        # ],
+    },
+}
 
 
 

@@ -6,6 +6,7 @@ from django.views.static import serve as static_serve
 from dotenv import load_dotenv
 load_dotenv()
 import os
+# from .admin_site import admin_site
 
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
@@ -16,6 +17,7 @@ admin.site.app_index = "Welcome to Home Worker Finder"
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # path("admin/", admin_site.urls),
     path("", WelComeAPI.as_view(), name="WelcomeAPI"),
 
     # include APP Urls File==========
