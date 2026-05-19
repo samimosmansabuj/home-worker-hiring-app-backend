@@ -12,9 +12,10 @@ RUN apt-get update && apt-get install -y \
 
 
 COPY requirements.txt .
+RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8080"]
-
+# CMD ["python", "manage.py", "runserver", "0.0.0.0:8001"]
+CMD ["gunicorn", "find_worker_config.wsgi:application", "--bind", "0.0.0.0:8001"]
