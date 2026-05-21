@@ -346,7 +346,7 @@ class CreateUserHelperView(CreateAPIView):
                     request=self.request, action="CREATE HELPER", status=LogStatus.SUCCESS, message="Create User Helper Profile.", entity=serializer.instance,
                     perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
                     notify=True,
-                    notification_message="Successfully Create Your Helper Profile."
+                    role=UserRole.USER, notification_message="Successfully Create Your Helper Profile."
                 )
                 return Response(
                     {

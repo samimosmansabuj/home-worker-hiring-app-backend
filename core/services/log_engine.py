@@ -8,17 +8,6 @@ from chat_notify.utils import push_notification, push_notify_role
 from chat_notify.models import Notification
 
 
-# handle_log_engine(
-#     request=request, action="Provider Verification", status=LogStatus.SUCCESS, message="Provider Document Verification Complete", entity=verification,
-#     perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
-#     notify=True, logify=True,
-#     role=UserRole.USER, send_to=self.request.user, send_to_type=UserDefault.PROVIDER, notification_message=""
-# )
-# handle_log_engine(
-#     request=request, action="Provider Verification", status=LogStatus.FAILED, message=str(e),
-#     perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER
-# )
-
 def handle_log_engine(request, action, status, message, entity=None, perform_user=None, perform_user_type=None, logify=True, notify=False, role=None, send_to=None, send_to_type=None, notification_message=None):
     log_data = {
         "action": action,
