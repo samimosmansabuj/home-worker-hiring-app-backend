@@ -7,8 +7,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 from dotenv import load_dotenv
 import os
 ENV_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-load_dotenv(os.path.join(ENV_BASE_DIR, ".env"))
-# load_dotenv()
+# load_dotenv(os.path.join(ENV_BASE_DIR, ".env"))
+load_dotenv()
 
 
 SECRET_KEY = os.getenv("SECRET_KEY")
