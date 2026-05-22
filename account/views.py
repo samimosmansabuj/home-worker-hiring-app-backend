@@ -456,16 +456,17 @@ class ProviderVerificationViews(APIView):
     def post(self, request):
         try:
             with transaction.atomic():
-                if not self.request.user.hasServiceProviderProfile:
+                provider = getattr(request.user, "service_provider_profile", None)
+                if not provider:
                     raise Exception("This user have no provider profile.")
-                            
-                provider = request.user.hasServiceProviderProfile
-                verification, _ = ProviderVerification.objects.get_or_create(provider=provider)
+
+                verification, created = ProviderVerification.objects.get_or_create(
+                    provider=provider
+                )
                 if request.user.status == UserStatus.ACTIVE and provider.is_verified and verification.is_verified:
                     raise Exception(_("Already Verified!"))
 
                 serializer = self.serializer_class(verification, data=request.data, partial=True)
-                # serializer = self.serializer_class(data=request.data)
                 serializer.is_valid(raise_exception=True)
                 serializer.save()
                 image_path = verification.document.path
