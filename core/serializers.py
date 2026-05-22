@@ -139,6 +139,8 @@ class HelperSerializer(serializers.ModelSerializer):
 
     def get_office_location(self, obj):
         office = obj.office_location
+        if not office:
+            return None
         return {
             "id": office.id,
             "address_line": office.address_line,

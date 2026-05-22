@@ -152,7 +152,7 @@ class OrderRefundRequest(models.Model):
 
 
 class PaymentTransaction(models.Model):
-    # related object fields 
+    # related object fields
     user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")
     profile = models.CharField(max_length=15, choices=UserDefault.choices, blank=True, null=True)
     order = models.ForeignKey(Order, on_delete=models.SET_NULL, blank=True, null=True, related_name="payment_transactions")

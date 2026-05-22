@@ -714,6 +714,7 @@ class ProviderVerificationAdmin(ModelAdmin):
     list_display = (
         "id",
         "provider_name",
+        "full_name",
         "document_type",
         "status",
         "is_verified",
@@ -723,12 +724,17 @@ class ProviderVerificationAdmin(ModelAdmin):
     search_fields = (
         "provider__user__username",
         "provider__user__email",
+        "full_name",
+        "document_id",
+        "dob",
+        "document_type"
     )
 
     list_filter = (
         "status",
         "is_verified",
         "document_type",
+        "dob",
     )
 
     autocomplete_fields = ("provider",)
@@ -746,6 +752,9 @@ class ProviderVerificationAdmin(ModelAdmin):
             "fields": (
                 "document_type",
                 "document",
+                "full_name",
+                "dob",
+                "document_id"
             )
         }),
 

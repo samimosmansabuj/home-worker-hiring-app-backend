@@ -6,7 +6,7 @@ from rest_framework.generics import RetrieveUpdateDestroyAPIView, CreateAPIView,
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
-from .models import Address, CustomerProfile, HelperSlotException, HelperSpecialDate, HelperWallet, HelperWeeklyAvailability, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher, SavedHelper
+from .models import Address, CustomerProfile, HelperSlotException, HelperSpecialDate, HelperWallet, HelperWeeklyAvailability, ServiceProviderProfile, CustomerPaymentMethod, ProviderPayoutMethod, UserLanguage, Referral, Voucher, SavedHelper, ActivityLog, ProviderVerification
 from .serializers import (
     HelperWeeklyAvailabilitySerializer, ProviderEarningsViewSerializer, ReviewAndRatingProfileSerializer, UserAddressSerializer, ProviderVerificationSerializer, CustomerPaymentMethodSerializer, ProviderPayoutMethodSerializer, ReferralSerializer, VoucherSerializer, ApplyVoucherSerializer, CurrentUserInfoSerializer, CurrentUserHelperSerializer, SaveHelperProfileSerializer
 )
@@ -18,7 +18,6 @@ from find_worker_config.model_choice import (
     DateStatus, OrderStatus, OrderPaymentStatus , UserRole, UserDefault, DocumentStatus, UserStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, DayStatus, HelperSlotExceptionType, PaymentAction, LogStatus
 )
 from core.serializers import HelperSerializer
-from .models import ProviderVerification
 from .utils import generate_otp, get_otp_object
 from find_worker_config.utils import UpdateModelViewSet, UpdateReadOnlyModelViewSet
 from rest_framework.permissions import IsAuthenticated
@@ -26,8 +25,7 @@ from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth import get_user_model
 from task.models import Order, ReviewAndRating
-from .models import ActivityLog
-
+from math import radians, cos, sin, asin, sqrt
 from datetime import timedelta
 from django.utils import timezone
 from django.db.models import Sum
@@ -432,21 +430,6 @@ class ProviderVerificationViews(APIView):
     serializer_class = ProviderVerificationSerializer
     permission_classes = [IsAuthenticated]
 
-    def create_log(self, log_status, entity=None, for_notify=False, metadata={}):
-        data = {
-            "user": self.request.user,
-            "user_type": UserDefault.PROVIDER,
-            "action": "DOCUMENT VERIFICATION",
-            "status": log_status,
-            "entity": entity,
-            "for_notify": for_notify,
-            "request": self.request,
-            "metadata": metadata
-        }
-        log = LogActivityModule(data)
-        log.create()
-
-
     def get(self, request, *args, **kwargs):
         try:
             if request.user.role == UserRole.USER:
@@ -477,7 +460,7 @@ class ProviderVerificationViews(APIView):
                     raise Exception("This user have no provider profile.")
                             
                 provider = request.user.hasServiceProviderProfile
-                verification = provider.verification
+                verification, _ = ProviderVerification.objects.get_or_create(provider=provider)
                 if request.user.status == UserStatus.ACTIVE and provider.is_verified and verification.is_verified:
                     raise Exception(_("Already Verified!"))
 
@@ -738,7 +721,11 @@ class HelperWeeklyAvailabilityViewSet(UpdateModelViewSet):
                 {
                     "status": True,
                     "count": len(slots),
-                    "data": slots
+                    "data": {
+                        "date": date_obj,
+                        "day": weekday,
+                        "slots": slots
+                    }
                 }, status=status.HTTP_200_OK
             )
         except Exception as e:
@@ -881,14 +868,14 @@ class NextJobOrdersView(APIView):
 class ProviderEarningsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get_reports(self, provider):
+    def get_reports(self):
         now = timezone.now()
         last_7_days = now - timedelta(days=7)
         last_30_days = now - timedelta(days=30)
 
         last_7_total = PaymentTransaction.objects.filter(
             user=self.request.user,
-            provider=provider,
+            profile=UserDefault.PROVIDER,
             action=PaymentAction.SEND_PROVIDER,
             created_at__gte=last_7_days
         ).aggregate(
@@ -897,7 +884,7 @@ class ProviderEarningsView(APIView):
 
         last_30_total = PaymentTransaction.objects.filter(
             user=self.request.user,
-            provider=provider,
+            profile=UserDefault.PROVIDER,
             action=PaymentAction.SEND_PROVIDER,
             created_at__gte=last_30_days
         ).aggregate(
@@ -910,26 +897,26 @@ class ProviderEarningsView(APIView):
         }
 
     def get(self, request):
-        try:
-            with transaction.atomic():
-                provider = request.user.hasServiceProviderProfile
-                if not provider:
-                    raise Exception("This user have no provider profile.")
-                helper_earnings, created = HelperWallet.objects.get_or_create(provider=request.user.hasServiceProviderProfile)
-                return Response(
-                    {
-                        "status": True,
-                        "data": ProviderEarningsViewSerializer(helper_earnings).data,
-                        "reports": self.get_reports(provider)
-                    }, status=status.HTTP_200_OK
-                )
-        except Exception as e:
+        # try:
+        with transaction.atomic():
+            provider = request.user.hasServiceProviderProfile
+            if not provider:
+                raise Exception("This user have no provider profile.")
+            helper_earnings, created = HelperWallet.objects.get_or_create(provider=request.user.hasServiceProviderProfile)
             return Response(
                 {
-                    "status": False,
-                    "message": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST
+                    "status": True,
+                    "data": ProviderEarningsViewSerializer(helper_earnings).data,
+                    "reports": self.get_reports()
+                }, status=status.HTTP_200_OK
             )
+        # except Exception as e:
+        #     return Response(
+        #         {
+        #             "status": False,
+        #             "message": str(e)
+        #         }, status=status.HTTP_400_BAD_REQUEST
+        #     )
 
 class ProviderEarningsTransactionsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1109,6 +1096,21 @@ class GetMyReferralCodeView(APIView):
 class RecommendationHelperViewSet(UpdateReadOnlyModelViewSet):
     serializer_class = HelperSerializer
     permission_classes = [IsAuthenticated]
+    
+    def haversine(self, lat2, lon2):
+        lon1, lat1, lon2, lat2 = map(
+            radians, [self.user_lng, self.user_lat, lon2, lat2]
+        )
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        c = 2 * asin(sqrt(a))
+        return round(6371 * c, 2)
+    
+    def get_serializer_context(self):
+        return {
+            "request": self.request
+        }
 
     def get_current_location_lat_lng(self):
         current_location = self.request.query_params.get("current_location", None)
@@ -1117,27 +1119,53 @@ class RecommendationHelperViewSet(UpdateReadOnlyModelViewSet):
                 lat, lng = map(float, current_location.split(","))
                 return lat, lng
             except ValueError:
-                return None
+                return None, None
         else:
             current_location = self.request.user.addresses.filter(is_default=True).first()
             if current_location:
                 return current_location.lat, current_location.lng
-        return None
+        return None, None
     
     def get_queryset(self):
-        location = self.get_current_location_lat_lng() or (None, None)
-        if location:
-            user_lat, user_lng = location
-            queryset = ServiceProviderProfile.objects.filter(is_verified=True)
-            distance_expr = ExpressionWrapper(
-                ((Value(user_lat) - F('office_location__lat'))**2 +
-                (Value(user_lng) - F('office_location__lng'))**2) ** 0.5,
-                output_field=FloatField()
-            )
-            queryset = queryset.annotate(
-                distance=distance_expr
-            ).order_by('distance')[:3]
-            return queryset[:3]
+        location = self.get_current_location_lat_lng()
+        if not location:
+            return ServiceProviderProfile.objects.none()
+        user_lat, user_lng = location
+        self.user_lat = user_lat
+        self.user_lng = user_lng
+        
+        queryset = ServiceProviderProfile.objects.filter(
+            is_verified=True,
+            office_location__isnull=False,
+            office_location__lat__isnull=False,
+            office_location__lng__isnull=False,
+        ).select_related(
+            "office_location",
+            "user"
+        )
+        helpers = []
+        for helper in queryset:
+            office = helper.office_location
+            if not office or not office.lat or not office.lng:
+                continue
+            distance = self.haversine(office.lat, office.lng)
+            helper.distance_km = distance
+            if distance <= float(5):
+                    helpers.append(helper)
+        return helpers[:3]
+    
+    def list(self, request, *args, **kwargs):
+        helpers = self.get_queryset()
+        page = self.paginate_queryset(helpers)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(helpers, many=True)
+        return Response({
+            "status": True,
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
     
     def get_object(self):
         return get_object_or_404(ServiceProviderProfile, pk=self.kwargs.get("pk"))

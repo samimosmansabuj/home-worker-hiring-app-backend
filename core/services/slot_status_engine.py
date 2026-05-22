@@ -4,7 +4,6 @@ from find_worker_config.model_choice import HelperSlotExceptionType, DayStatus, 
 from django.db.models import Case, When, IntegerField
 
 class SlotStatusEngine:
-
     def get_weekly_availability(self, provider, date_obj):
         weekday = date_obj.strftime("%a")
         availability = HelperWeeklyAvailability.objects.filter(
@@ -44,7 +43,6 @@ class SlotStatusEngine:
         return datetime.combine(date, time)
 
     def get_status(self, provider, date_obj, slot_start, slot_end):
-        # print(f"date: {date_obj}, slot_start: {slot_start}, slot_end: {slot_end}")
         now = datetime.now()
         if date_obj == now.date() and slot_start < now:
             return HelperSlotExceptionType.UNAVAILABLE
@@ -53,7 +51,7 @@ class SlotStatusEngine:
         if weekly_availability:
             if weekly_availability.day_status != DayStatus.AVAILABLE:
                 status = DayStatus.UNAVAILABLE
-            if self.combine_date_time(date_obj, weekly_availability.start_time) <= slot_start and slot_end <= self.combine_date_time(date_obj, weekly_availability.end_time):
+            elif self.combine_date_time(date_obj, weekly_availability.start_time) <= slot_start and slot_end <= self.combine_date_time(date_obj, weekly_availability.end_time):
                 status = DayStatus.AVAILABLE
             else:
                 status = DayStatus.UNAVAILABLE

@@ -334,13 +334,14 @@ class HelperListViewset(UpdateReadOnlyModelViewSet):
         self.user_lat = address.lat
         self.user_lng = address.lng
 
-        return ServiceProviderProfile.objects.select_related(
+        helper_list = ServiceProviderProfile.objects.select_related(
             "user", "office_location"
         ).prefetch_related(
             "service_category"
         ).exclude(
             user=user
         )
+        return helper_list
     
     def get_sorting_queryset(self, queryset, sort_by):
         if sort_by == "rating":

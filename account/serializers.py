@@ -16,6 +16,7 @@ from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
+from task.models import ServiceCategory
 
 # OAuth2 imports
 from google.oauth2 import id_token
@@ -366,7 +367,7 @@ class CurrentUserInfoSerializer(serializers.ModelSerializer):
         data["address"] = self.get_user_profile_address(instance)
         return data
 
-from task.models import ServiceCategory
+
 class CurrentUserHelperSerializer(serializers.ModelSerializer):
     service_category = ServiceCategoryField(required=True)
     company_name = serializers.CharField(required=True)
@@ -377,7 +378,7 @@ class CurrentUserHelperSerializer(serializers.ModelSerializer):
     office_location = serializers.SerializerMethodField(read_only=True)
     class Meta:
         model = ServiceProviderProfile
-        fields = ["company_name", "logo", "details", "hourly_rate", "min_booking_hours", "office_location", "strike_count", "account_status", "availability_status", "is_verified", "complete_rate", "total_jobs", "rating", "service_category", "portfolio", "reviews_and_ratings"]
+        fields = ["id", "company_name", "logo", "details", "hourly_rate", "min_booking_hours", "office_location", "strike_count", "account_status", "availability_status", "is_verified", "complete_rate", "total_jobs", "rating", "service_category", "portfolio", "reviews_and_ratings"]
         read_only_fields = ["office_location", "strike_count", "account_status", "is_verified", "complete_rate", "total_jobs", "rating"]
     
     def get_reviews_and_ratings(self, obj):
@@ -495,16 +496,29 @@ class ApplyVoucherSerializer(serializers.Serializer):
 
 
 class ProviderVerificationSerializer(serializers.ModelSerializer):
+    dob = serializers.DateField(input_formats=["%d-%m-%Y"])
+    
     class Meta:
         model = ProviderVerification
         fields = "__all__"
         read_only_fields = ["provider"]
     
     def validate(self, attrs):
-        document = attrs.get("document")
-        if not document:
-            raise Exception("Document must be submitted.")
-        return super().validate(attrs)
+        required_fields = {
+            "full_name": "Full name is required.",
+            "document_id": "Document ID is required.",
+            "dob": "Date of birth is required.",
+            "document": "Document image is required.",
+            "document_type": "Document type is required.",
+        }
+        errors = {}
+        for field, message in required_fields.items():
+            value = attrs.get(field)
+            if not value and not getattr(self.instance, field, None):
+                errors[field] = str(message)
+        if errors:
+            raise ValidationError(errors)
+        return attrs
     
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -528,6 +542,41 @@ class SaveHelperProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavedHelper
         fields = "__all__"
+    
+    def to_representation(self, instance):
+        if not instance.helper:
+            return None
+        request = self.context.get("request")
+        data = {}
+        def build_user_profile(helper):
+            profile = {
+                "id": helper.id,
+                "first_name": helper.user.first_name,
+                "last_name": helper.user.last_name,
+                "company_name": helper.company_name,
+                "details": helper.details,
+                "hourly_rate": helper.hourly_rate,
+                "account_status": helper.account_status,
+                "availability_status": helper.availability_status,
+                "is_verified": helper.is_verified,
+                "complete_rate": helper.complete_rate,
+                "total_jobs": helper.total_jobs,
+                "rating": helper.rating,
+                "logo": request.build_absolute_uri(helper.logo.url) if helper.logo else None,
+                "email": helper.user.email,
+                "phone": helper.user.phone,
+            }
+            if helper.office_location:
+                profile["office_location"] = {
+                    "address_line": helper.office_location.address_line or "",
+                    "city": helper.office_location.city or "",
+                    "lat": helper.office_location.lat or "",
+                    "lng": helper.office_location.lng or "",
+                }
+            return profile
+        data["id"] = instance.id
+        data["helper"] = build_user_profile(instance.helper)
+        return data
 
 class ReviewAndRatingProfileSerializer(serializers.ModelSerializer):
 
