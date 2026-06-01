@@ -1,7 +1,7 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from .models import ChatMessage, ChatRoom
+from .models import ChatMessage, ChatRoom, Attachment
 from django.core.exceptions import ObjectDoesNotExist
 import base64
 from django.core.files.base import ContentFile
@@ -37,7 +37,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
     
     async def receive(self, text_data):
-        data = json.loads(text_data or {})
+        data = json.loads(text_data or "{}")
         message = (data.get("message") or "").strip()
 
         type_map = {
@@ -46,7 +46,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "video": SendMessageType.VIDEO,
             "audio": SendMessageType.AUDIO,
             "file": SendMessageType.FILE,
-            "offer": SendMessageType.OFFER,
+            # "offer": SendMessageType.OFFER,
             "delete": "delete"
         }
         message_type = type_map.get((data.get("type") or "text").lower().strip(), SendMessageType.TEXT)
@@ -54,7 +54,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if message_type == "delete":
             message_id = data.get("message_id")
             room_Id = data.get("roomId")
-            if not message_id and not room_Id:
+            if not message_id or not room_Id:
                 return
             
             ok = await self.delete_message(message_id, room_Id)
@@ -76,21 +76,35 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 file = ContentFile(base64.b64decode(base64_data), name=attachment_name)
             
             ok = await self.save_message_with_attachment(message, file, attachment_size, message_type)
+            user = ok.get("user")
+            photo = ok.get("photo")
+            message = ok.get("message")
+            attachment = ok.get("attachment")
             
             payload = {
-                'type': 'chat_message',
-                'message_type': message_type,
-                'message': message,
-                'message_id': ok["message_id"],
-                'attachment': {
-                    'url': self._abs_url(ok['url']),
-                    'mime': ok.get('mime', ''),
-                    'name': ok.get('name', ''),
-                    'size': ok.get('size', 0),
+                "type": 'chat_message',
+                
+                "id": message.id,
+                "message_type": message.message_type,
+                "content": message.content,
+                "timestamp": message.timestamp.isoformat(),
+                "is_read": message.is_read,
+                
+                'attachments': {
+                    'url': self._abs_url(attachment.file.url),
+                    'mime': attachment.file.mime or "",
+                    'name': attachment.file.name or "",
+                    'size': attachment.size or 0,
                 },
-                'sender': ok["username"],
-                'sender_id': ok["id"],
-                'sender_profile': self._abs_url(ok["profile"]),
+                "event": {},
+                
+                "sender": message.sender,
+                "sender_data": {
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "photo": photo,
+                    "user": user.role,
+                },
             }
         elif message_type == SendMessageType.TEXT:
             if not message:
@@ -103,14 +117,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
             message = ok.get("message")
             payload = {
                 "type": 'chat_message',
+                
                 "id": message.id,
-                "sender": message.sender,
                 "message_type": message.message_type,
                 "content": message.content,
                 "timestamp": message.timestamp.isoformat(),
                 "is_read": message.is_read,
-                "attachments": [],
-                'sender_data': {
+                
+                "attachments": {},
+                "event": {},
+                
+                "sender": message.sender,
+                "sender_data": {
                     "first_name": user.first_name,
                     "last_name": user.last_name,
                     "photo": photo,
@@ -140,18 +158,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def save_message_with_attachment(self, message, file, file_size, msg_type):
         user = self.scope['user']
         try:
-            room = ChatRoom.objects.get(id=self.roomId)
+            room = ChatRoom.objects.get(uuid=self.roomId)
         except ObjectDoesNotExist:
             return False
         
         if not file:
-            False
+            return False
         # ALLOWED_MIME_PREFIXES = ("image/", "video/", "audio/", "pdf/")  # files allowed too, see below
         MAX_FILE_MB = 25
         
         if file_size > MAX_FILE_MB * 1024 * 1024:
             return False
-        msg = ChatMessage.objects.create(sender=user, room=room, content=message, type=msg_type)
+        msg = ChatMessage.objects.create(sender=self.profileType, room=room, content=message, message_type=msg_type)
         
         att = Attachment.objects.create(
             message=msg,
@@ -170,7 +188,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
             except Exception:
                 profile_url = ''
 
-        return {'id': user.id, 'username': user.username, 'profile': profile_url, "url": att.file.url, "mime": att.mime, "name": att.name, "size": att.size, 'message_id': msg.pk}
+        # return {'id': user.id, 'username': user.username, 'profile': profile_url, "url": att.file.url, "mime": att.mime, "name": att.name, "size": att.size, 'message_id': msg.pk}
+        return {
+            "user": user, "photo": profile_url, "message": msg, "attachment": att
+        }
     
     @database_sync_to_async
     def save_message(self, message, message_type):
@@ -192,8 +213,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         return {'user': user, 'photo': photo, 'message': message}
     
-    
-
     @database_sync_to_async
     def verify_room_id(self, room_uuid):
         status = ChatRoom.objects.filter(uuid=room_uuid).exists()
@@ -202,15 +221,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def check_user_and_room(self, user, profileType, room_uuid):
         from find_worker_config.model_choice import UserDefault
-        room = ChatRoom.objects.get(uuid=room_uuid)
+        try:
+            room = ChatRoom.objects.get(uuid=room_uuid)
 
-        if room.customer.user == room.provider.user:
-            return False
-        elif profileType.upper() == UserDefault.CUSTOMER and room.customer == user.customer_profile:
-            return True
-        elif profileType.upper() == UserDefault.PROVIDER and room.provider == user.service_provider_profile:
-            return True
-        else:
+            if room.customer.user == room.provider.user:
+                return False
+            elif profileType.upper() == UserDefault.CUSTOMER and room.customer == user.customer_profile:
+                return True
+            elif profileType.upper() == UserDefault.PROVIDER and room.provider == user.service_provider_profile:
+                return True
+            else:
+                return False
+        except ChatRoom.DoesNotExist:
             return False
     # ======================Database Object Update in Websocket Consumer================
     

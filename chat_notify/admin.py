@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ChatRoom, ChatMessage, Attachment, Notification, CustomOffer
+from .models import ChatRoom, ChatMessage, Attachment, Notification, ChatEvent
 from unfold.admin import ModelAdmin
 
 @admin.register(Notification)
@@ -120,8 +120,8 @@ class AttachmentInline(admin.TabularInline):
     model = Attachment
     extra = 0
 
-class CustomOfferInline(admin.StackedInline):
-    model = CustomOffer
+class ChatEventInline(admin.StackedInline):
+    model = ChatEvent
     extra = 0
 
 @admin.register(ChatMessage)
@@ -157,7 +157,7 @@ class ChatMessageAdmin(ModelAdmin):
 
     inlines = [
         AttachmentInline,
-        CustomOfferInline,
+        ChatEventInline,
     ]
 
     fieldsets = (

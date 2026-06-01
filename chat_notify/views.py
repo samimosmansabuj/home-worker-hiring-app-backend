@@ -1,5 +1,5 @@
 from rest_framework import status
-from .serializers import ChatRoomSerializer, ChatMessageSerializer, MessageAttachmentSerializer, RoomStartSerializer, NotificationSerializer
+from .serializers import ChatRoomSerializer, ChatMessageSerializer, MessageAttachmentSerializer, RoomStartSerializer, NotificationSerializer, ChatMessageSpecialSerializer
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
@@ -63,7 +63,7 @@ class ChatRoomViewsets(GenericViewSet):
                 "status": True,
                 "data": serializer.data
             }, status=status.HTTP_200_OK)
-
+        print("---------")
         rooms = ChatRoom.objects.filter(
             customer=self.get_customer()
         ).select_related("customer", "provider")
@@ -100,7 +100,6 @@ class ChatRoomViewsets(GenericViewSet):
             }, status=status.HTTP_200_OK
         )
 
-
 class ChatRoomMessageViewsets(UpdateModelViewSet):
     queryset = ChatMessage.objects.all()
     serializer_class = ChatMessageSerializer
@@ -134,7 +133,15 @@ class ChatRoomMessageViewsets(UpdateModelViewSet):
         return Response(
             {
                 "status": True,
-                "data": ChatMessageSerializer(messages, many=True).data
+                "data": ChatMessageSpecialSerializer(messages, many=True).data
+            }, status=status.HTTP_200_OK
+        )
+    
+    def retrieve(self, request, *args, **kwargs):
+        return Response(
+            {
+                "status": True,
+                "data": ChatMessageSpecialSerializer(self.get_object()).data
             }, status=status.HTTP_200_OK
         )
     
@@ -166,7 +173,6 @@ class ChatRoomMessageViewsets(UpdateModelViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST
             )
 
-
 class NotificationViewsets(UpdateModelViewSet):
     queryset = Notification.objects.all()
     serializer_class = NotificationSerializer
@@ -196,3 +202,4 @@ class NotificationViewsets(UpdateModelViewSet):
                 "message": "Notification direct create not allow."
             }, status=status.HTTP_405_METHOD_NOT_ALLOWED
         )
+

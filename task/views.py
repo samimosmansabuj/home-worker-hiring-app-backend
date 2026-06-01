@@ -8,7 +8,7 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from find_worker_config.permissions import IsAdminWritePermissionOnly, ForCustomerProfile, ForAdminProfile
-from find_worker_config.model_choice import UserRole, OrderStatus, OrderPaymentStatus, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault, LogStatus, HelperSlotExceptionType, OrderChangesRequestStatus, ChangesRequestType
+from find_worker_config.model_choice import UserRole, OrderStatus, OrderPaymentStatus, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault, LogStatus, HelperSlotExceptionType, OrderChangesRequestStatus, ChangesRequestType, SendMessageType, SendEventType
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -17,6 +17,8 @@ from core.services.log_engine import handle_log_engine
 from datetime import datetime, timedelta
 from core.paginations import DefaultPagination
 from math import radians, cos, sin, asin, sqrt
+from chat_notify.utils import PushSendMessage
+from chat_notify.models import ChatRoom
 
 # ============================================================
 # Category Views Section ===================
@@ -64,13 +66,27 @@ class CustomerOrderCreateViews(CreateAPIView):
         except ValueError:
             raise ValidationError("Invalid time format. Expected format like '09:00 AM'")
     
+    def get_room(self, order):
+        customer = order.customer
+        provider = order.provider
+        room, _ = ChatRoom.objects.get_or_create(
+            customer=customer,
+            provider=provider
+        )
+        return room
+    
     def create(self, request, *args, **kwargs):
         try:
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             self.perform_create(serializer)
             instance = serializer.instance
-
+            
+            room = self.get_room(instance)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(UserDefault.CUSTOMER, instance, message_type=SendMessageType.EVENT, event_type=SendEventType.ORDER_CREATED)
+            sendMessage.send_message()
+            
             handle_log_engine(
                 request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Custom Offer Created by Customer", entity=instance,
                 perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
@@ -135,6 +151,15 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializerAll
     permission_classes = [IsAuthenticated]
     pagination_class = DefaultPagination
+    
+    def get_room(self, order):
+        customer = order.customer
+        provider = order.provider
+        room, _ = ChatRoom.objects.get_or_create(
+            customer=customer,
+            provider=provider
+        )
+        return room
 
     def get_filter_data(self, queryset):
         # ---- Query Params ----
@@ -236,6 +261,13 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             serializer.save(
                 order=order, profile_type=UserDefault.CUSTOMER
             )
+            
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.CUSTOMER, order, message_type=SendMessageType.EVENT, event_type=SendEventType.ORDER_COUNTER, changes_object=serializer.get_changes_object()
+            )
+            sendMessage.send_message()
 
             handle_log_engine(
                 request=request, action="COUNTER OFFER SEND", status=LogStatus.SUCCESS, message="Send Counter Offer from Customer.", entity=order,
@@ -300,6 +332,15 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             order.save()
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.FREEZED)
+            
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.CUSTOMER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_STATUS,
+                # changes_object=serializer.get_changes_object()
+            )
+            sendMessage.send_message()
 
             handle_log_engine(
                 request=request, action="ACCEPT OFFER", status=LogStatus.SUCCESS, message="Accept the Custom Offer.", entity=order,
@@ -355,6 +396,15 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 order.save(update_fields=["status", "payment_status"])
 
                 self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+                
+                room = self.get_room(order)
+                sendMessage = PushSendMessage(request, room)
+                sendMessage.order_chat_message(
+                    UserDefault.CUSTOMER, order, message_type=SendMessageType.EVENT,
+                    event_type=SendEventType.ORDER_STATUS,
+                    # changes_object=serializer.get_changes_object()
+                )
+                sendMessage.send_message()
 
                 handle_log_engine(
                     request=request, action="PAYMENT COMPLETE", status=LogStatus.SUCCESS, message="Payment Complete & Order Confirm", entity=order,
@@ -402,6 +452,15 @@ class CustomerOrderViewSet(UpdateModelViewSet):
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
             
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.CUSTOMER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_CHANGE_REQUEST,
+                changes_object=serializer.get_changes_object()
+            )
+            sendMessage.send_message()
+            
             handle_log_engine(
                 request=request, action="PROPOSE NEW TIME", status=LogStatus.SUCCESS, message="Send Propose New Time for Changes Time", entity=order,
                 perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
@@ -418,6 +477,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     @action(detail=True, methods=["post"])
     def cancel(self, request, *args, **kwargs):
         order = self.get_object()
+        changes_object = None
         data = request.data
         message = data.get("message", None)
         if message is None:
@@ -437,7 +497,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 )
             elif order.status in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS] and order.payment_status == OrderPaymentStatus.PAID:
                 order.status = OrderStatus.CANCELLATION_REQUEST
-                OrderChangesRequest.objects.create(
+                changes_object = OrderChangesRequest.objects.create(
                     order=order,
                     request_by=UserDefault.CUSTOMER,
                     status=OrderChangesRequestStatus.NO_RESPONSE,
@@ -456,6 +516,15 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 )
             order.save()
 
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.CUSTOMER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_CANCEL,
+                changes_object=changes_object
+            )
+            sendMessage.send_message()
+            
             handle_log_engine(
                 request=request, action="ORDER CANCELLATION REQUEST", status=LogStatus.SUCCESS, message="Send Cancel Request for Cancel This Order", entity=order,
                 perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
@@ -532,6 +601,16 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                     notify=True, logify=True,
                     role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Order Cencellation Request Rejected By Customer."
                 )
+            
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.CUSTOMER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_CANCEL,
+                changes_object=changes_request
+            )
+            sendMessage.send_message()
+            
             return Response(
                 {
                     "status": True,
@@ -612,6 +691,15 @@ class ProviderOrderViewSet(UpdateModelViewSet):
     serializer_class = OrderSerializerAll
     permission_classes = [IsAuthenticated]
     pagination_class = DefaultPagination
+    
+    def get_room(self, order):
+        customer = order.customer
+        provider = order.provider
+        room, _ = ChatRoom.objects.get_or_create(
+            customer=customer,
+            provider=provider
+        )
+        return room
 
     def get_filter_data(self, queryset):
         # ---- Query Params ----
@@ -714,6 +802,15 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             serializer.save(
                 order=order, profile_type=UserDefault.PROVIDER
             )
+            
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.PROVIDER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_COUNTER,
+                changes_object=serializer.get_changes_object()
+            )
+            sendMessage.send_message()
 
             handle_log_engine(
                 request=request, action="COUNTER OFFER SEND", status=LogStatus.SUCCESS, message="Send Counter Offer from Provider.", entity=order,
@@ -776,6 +873,14 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             order.save()
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.FREEZED)
+            
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.PROVIDER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_STATUS,
+            )
+            sendMessage.send_message()
 
             handle_log_engine(
                 request=request, action="ACCEPT OFFER", status=LogStatus.SUCCESS, message="Accept the Custom Offer.", entity=order,
@@ -800,6 +905,15 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 serializer.save(order=order)
 
                 self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+                
+                room = self.get_room(order)
+                sendMessage = PushSendMessage(request, room)
+                sendMessage.order_chat_message(
+                    UserDefault.PROVIDER, order, message_type=SendMessageType.EVENT,
+                    event_type=SendEventType.ORDER_HOUR_SET,
+                    changes_object=serializer.get_changes_object()
+                )
+                sendMessage.send_message()
 
                 handle_log_engine(
                     request=request, action="SET WORK HOUR", status=LogStatus.SUCCESS, message="Set Work Hour.", entity=order,
@@ -840,6 +954,15 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             serializer.save(order=order, profile_type=UserDefault.PROVIDER)
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.BOOKED)
+            
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.PROVIDER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_CHANGE_REQUEST,
+                changes_object=serializer.get_changes_object()
+            )
+            sendMessage.send_message()
 
             handle_log_engine(
                 request=request, action="PROPOSE NEW TIME", status=LogStatus.SUCCESS, message="Send Propose New Time for Changes Time", entity=order,
@@ -857,6 +980,7 @@ class ProviderOrderViewSet(UpdateModelViewSet):
     @action(detail=True, methods=["post"])
     def cancel(self, request, *args, **kwargs):
         order = self.get_object()
+        changes_object = None
         data = request.data
         message = data.get("message", None)
         if message is None:
@@ -876,7 +1000,7 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 )
             elif order.status in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS] and order.payment_status == OrderPaymentStatus.PAID:
                 order.status = OrderStatus.CANCELLATION_REQUEST
-                OrderChangesRequest.objects.create(
+                changes_object = OrderChangesRequest.objects.create(
                     order=order,
                     request_by=UserDefault.PROVIDER,
                     status=OrderChangesRequestStatus.NO_RESPONSE,
@@ -894,6 +1018,15 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                     }, status=status.HTTP_400_BAD_REQUEST
                 )
             order.save()
+            
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.PROVIDER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_CANCEL,
+                changes_object=changes_object
+            )
+            sendMessage.send_message()
 
             handle_log_engine(
                 request=request, action="ORDER CANCELLATION REQUEST", status=LogStatus.SUCCESS, message="Send Cancel Request for Cancel This Order", entity=order,
@@ -971,6 +1104,16 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                     notify=True, logify=True,
                     role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Order Cencellation Request Rejected By Provider."
                 )
+            
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.PROVIDER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_CANCEL,
+                changes_object=changes_request
+            )
+            sendMessage.send_message()
+            
             return Response(
                 {
                     "status": True,
@@ -987,6 +1130,14 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             serializer = StartWorkSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.work_start(order=order)
+            
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.PROVIDER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_WORK_START
+            )
+            sendMessage.send_message()
             
             handle_log_engine(
                 request=request, action="START WORK", status=LogStatus.SUCCESS, message="Start work to complete.", entity=order,
@@ -1026,6 +1177,15 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             serializer = CompleteSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.complete(order=self.get_object())
+            
+            order.refresh_from_db()
+            room = self.get_room(order)
+            sendMessage = PushSendMessage(request, room)
+            sendMessage.order_chat_message(
+                UserDefault.PROVIDER, order, message_type=SendMessageType.EVENT,
+                event_type=SendEventType.ORDER_COMPLETE
+            )
+            sendMessage.send_message()
 
             handle_log_engine(
                 request=request, action="COMPLETE ORDER", status=LogStatus.SUCCESS, message="Mark Complete the order by OTP.", entity=order,

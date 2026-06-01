@@ -159,12 +159,24 @@ class ServiceChargeType(models.TextChoices):
 
 # For Chat & Notify App============================================
 class SendMessageType(models.TextChoices):
-    TEXT = "TEXT"
-    IMAGE = "IMAGE"
-    VIDEO = "VIDEO"
+    TEXT = "TEXT", "Text"
+    IMAGE = "IMAGE", "Image"
+    VIDEO = "VIDEO", "Video"
     AUDIO = "AUDIO"
-    FILE  = "FILE"
-    OFFER = "OFFER"
+    FILE = "FILE", "File"
+    EVENT = "EVENT", "event"
+
+class SendEventType(models.TextChoices):
+    ORDER_CREATED = "ORDER_CREATED", "Order Created"
+    ORDER_COUNTER = "ORDER_COUNTER", "Order Counter"
+    ORDER_UPDATED = "ORDER_UPDATED", "Order Updated"
+    ORDER_STATUS = "ORDER_STATUS", "Order Status"
+    ORDER_CANCEL = "ORDER_CANCEL", "Order Cancel"
+    ORDER_COMPLETE = "ORDER_COMPLETEL", "Order Complete"
+    ORDER_WORK_START = "ORDER_WORK_START", "Order Work Start"
+    ORDER_HOUR_SET = "ORDER_HOUR_SET", "Order Hour Set"
+    ORDER_CHANGE_REQUEST = "ORDER_CHANGE_REQUEST", "Order Change Request"
+
 
 class CustomOfferStatus(models.TextChoices):
     SEND = "SEND"

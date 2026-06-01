@@ -1,7 +1,7 @@
 from django.db import models
 from account.models import CustomerProfile, ServiceProviderProfile, User
 # from task.models import ServiceTask
-from find_worker_config.model_choice import SendMessageType, CustomOfferStatus, NotifyType, UserDefault, UserRole
+from find_worker_config.model_choice import SendMessageType, SendEventType, CustomOfferStatus, NotifyType, UserDefault, UserRole
 import uuid
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -11,10 +11,10 @@ import os
 import mimetypes
 
 class ChatRoom(models.Model):
-    uuid = models.CharField(max_length=255, blank=True, null=True)
-    # uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    uuid = models.CharField(max_length=255, blank=True, null=True, unique=True)
     customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name="chat_customer")
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="chat_provider")
+    
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
@@ -31,7 +31,7 @@ class ChatRoom(models.Model):
 class ChatMessage(models.Model):
     room = models.ForeignKey(ChatRoom, on_delete=models.CASCADE, related_name='messages')
     sender = models.CharField(max_length=20, choices=UserDefault.choices)
-    message_type = models.CharField(max_length=16, choices=SendMessageType, default=SendMessageType.TEXT)
+    message_type = models.CharField(max_length=20, choices=SendMessageType.choices, default=SendMessageType.TEXT)
     content = models.TextField(blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
     is_read = models.BooleanField(default=False)
@@ -42,10 +42,12 @@ class ChatMessage(models.Model):
     def __str__(self):
         return f"{self.sender}: {self.content[:20]}"
 
-class CustomOffer(models.Model):
-    message = models.OneToOneField(ChatMessage, on_delete=models.CASCADE, related_name="custom_offers")
+class ChatEvent(models.Model):
+    message = models.OneToOneField(ChatMessage, on_delete=models.CASCADE, related_name="event")
     order_object = models.ForeignKey(Order, on_delete=models.SET_NULL, blank=True, null=True)
     reference_object = models.ForeignKey(OrderChangesRequest, on_delete=models.SET_NULL, blank=True, null=True)
+    event_type = models.CharField(max_length=50, choices=SendEventType.choices, default=SendEventType.ORDER_CREATED)
+    payload = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
