@@ -24,7 +24,7 @@ class DashboardAPIView(APIView):
             status=OrderStatus.COMPLETED,
             payment_status=OrderPaymentStatus.PAID
         )
-        serializer = AdminOrderSerializerAll(orders, many=True)
+        serializer = AdminOrderSerializer(orders, many=True)
         return serializer.data
     
     def get(self, request, *args, **kwargs):
