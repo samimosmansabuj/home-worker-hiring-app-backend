@@ -11,14 +11,19 @@ services:
     #   python manage.py migrate &&
     #   gunicorn find_worker_config.wsgi:application --bind 0.0.0.0:8001
     #   "
+    # command: >
+    #   sh -c "
+    #   python manage.py migrate &&
+    #   gunicorn find_worker_config.wsgi:application
+    #   --bind 0.0.0.0:8001
+    #   --workers 3
+    #   --threads 2
+    #   --timeout 120
+    #   "
     command: >
       sh -c "
       python manage.py migrate &&
-      gunicorn find_worker_config.wsgi:application
-      --bind 0.0.0.0:8001
-      --workers 3
-      --threads 2
-      --timeout 120
+      daphne -b 0.0.0.0 -p 8001 find_worker_config.asgi:application
       "
 
     volumes:
