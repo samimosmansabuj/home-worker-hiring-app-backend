@@ -184,12 +184,24 @@ class AttachmentSerializer(serializers.ModelSerializer):
         return obj.file.url
 
 class ChatOrderSerializer(serializers.ModelSerializer):
-    end_time = serializers.ReadOnlyField()
-    end_datetime = serializers.ReadOnlyField()
+    # end_time = serializers.ReadOnlyField()
+    # end_datetime = serializers.ReadOnlyField()
+    end_time = serializers.SerializerMethodField()
+    end_datetime = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = ("id", "title", "description", "area", "amount", "status", "payment_status", "working_date", "working_start_time", "working_hour", "end_time", "end_datetime", "created_at", )
+    
+    def get_end_time(self, obj):
+        if obj.end_time:
+            return obj.end_time.strftime("%H:%M:%S")
+        return None
+
+    def get_end_datetime(self, obj):
+        if obj.end_datetime:
+            return obj.end_datetime.isoformat()
+        return None
 
 class OrderChangesRequestSerializer(serializers.ModelSerializer):
 
