@@ -80,10 +80,10 @@ class AdminCustomerSerializer(serializers.ModelSerializer):
         fields = ["id", "first_name", "last_name", "email", "phone", "total_orders", "complete_total", "cancelled_total", "location"]
 
     def get_complete_total(self, obj):
-        return obj.completed_orders.count() if hasattr(obj, "completed_orders") else 0
+        return obj.completed_orders if hasattr(obj, "completed_orders") else 0
 
     def get_cancelled_total(self, obj):
-        return obj.cancelled_orders.count() if hasattr(obj, "cancelled_orders") else 0
+        return obj.cancelled_orders if hasattr(obj, "cancelled_orders") else 0
 
     def get_user_profile_address(self, user):
         address_objects = Address.objects.filter(
