@@ -384,6 +384,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                     user=request.user,
                     profile=UserDefault.CUSTOMER,
                     amount=order.amount,
+                    order=order,
                     reference_object=order,
                     type=PaymentTransactionType.CREDIT,
                     action=PaymentAction.ORDER_PAYMENT

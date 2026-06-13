@@ -221,7 +221,7 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PaymentTransaction
-        fields = ["id", "date", "payment_id", "transaction_id", "user_first_name", "user_last_name", "user_picture", "type", "amount", "action"]
+        fields = ["id", "date", "payment_id", "transaction_id", "user_first_name", "user_last_name", "user_picture", "type", "amount", "action", "order"]
 
 class OrderRefundRequestSerializer(serializers.ModelSerializer):
     date = serializers.DateTimeField(source="created_at", read_only=True)

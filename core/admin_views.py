@@ -144,6 +144,7 @@ class AdminOrderViewSet(UpdateReadOnlyModelViewSet):
         transactions = PaymentTransaction.objects.filter(
             order=order
         ).select_related("user").order_by("-created_at")
+        print("transactions: ", transactions)
         serializer = AdminOrderPaymentTransactionSerializer(
             transactions,
             many=True,
