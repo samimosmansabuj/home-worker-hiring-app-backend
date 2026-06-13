@@ -275,6 +275,7 @@ class OrderRefundViewSets(UpdateReadOnlyModelViewSet):
                     payment = PaymentTransactionModule(
                         user=refund_object.customer.user,
                         profile=UserDefault.CUSTOMER,
+                        order=order,
                         amount=refund_object.refund_amount,
                         reference_object=refund_object,
                         type=PaymentTransactionType.DEBIT,
