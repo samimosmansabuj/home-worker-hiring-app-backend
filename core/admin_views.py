@@ -92,11 +92,43 @@ class AdminProviderViews(UpdateReadOnlyModelViewSet):
     queryset = ServiceProviderProfile.objects.all()
     serializer_class = AdminProviderSerializer
     permission_classes = [IsAdmin]
+    
+    @action(detail=True, methods=["get"], url_path="get-orders")
+    def get_client_order(self, request, pk=None):
+        provider = self.get_object()
+        order = provider.orders_as_provider.all()
+        serializer = AdminOrderSerializer(
+            order,
+            many=True,
+            context={"request": request}
+        )
+        return Response(
+            {
+                "status": True,
+                "results": serializer.data
+            }, status=status.HTTP_200_OK
+        )
 
 class AdminCustomerViews(UpdateReadOnlyModelViewSet):
     queryset = CustomerProfile.objects.all()
     serializer_class = AdminCustomerSerializer
     permission_classes = [IsAdmin]
+    
+    @action(detail=True, methods=["get"], url_path="get-orders")
+    def get_client_order(self, request, pk=None):
+        customer = self.get_object()
+        order = customer.orders_as_customer.all()
+        serializer = AdminOrderSerializer(
+            order,
+            many=True,
+            context={"request": request}
+        )
+        return Response(
+            {
+                "status": True,
+                "results": serializer.data
+            }, status=status.HTTP_200_OK
+        )
 
 class AdminOrderViewSet(UpdateReadOnlyModelViewSet):
     queryset = Order.objects.all()
@@ -144,7 +176,6 @@ class AdminOrderViewSet(UpdateReadOnlyModelViewSet):
         transactions = PaymentTransaction.objects.filter(
             order=order
         ).select_related("user").order_by("-created_at")
-        print("transactions: ", transactions)
         serializer = AdminOrderPaymentTransactionSerializer(
             transactions,
             many=True,
