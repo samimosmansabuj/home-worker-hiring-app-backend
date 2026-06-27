@@ -19,6 +19,8 @@ from core.paginations import DefaultPagination
 from math import radians, cos, sin, asin, sqrt
 from chat_notify.utils import PushSendMessage
 from chat_notify.models import ChatRoom
+from core.services.slot_status_engine import SlotStatusEngine
+from django.db import transaction
 
 # ============================================================
 # Category Views Section ===================
@@ -75,37 +77,56 @@ class CustomerOrderCreateViews(CreateAPIView):
         )
         return room
     
+    def slot_engine_call(self, provider, date, slot_start_dt, slot_end_dt):
+        slot_engine = SlotStatusEngine()
+        slot_status = slot_engine.get_status(
+            provider=provider,
+            date_obj=date,
+            slot_start=slot_start_dt,
+            slot_end=slot_end_dt
+        )
+        if slot_status != HelperSlotExceptionType.AVAILABLE:
+            status_map = {
+                "BOOKED": "Already booked",
+                "UNAVAILABLE": "Provider unavailable",
+                "FREEZED": "Temporarily locked",
+            }
+            raise ValidationError({
+                "slot": status_map.get(slot_status, "Not available")
+            })
+    
     def create(self, request, *args, **kwargs):
         try:
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            self.perform_create(serializer)
-            instance = serializer.instance
-            
-            room = self.get_room(instance)
-            sendMessage = PushSendMessage(request, room)
-            sendMessage.order_chat_message(UserDefault.CUSTOMER, instance, message_type=SendMessageType.EVENT, event_type=SendEventType.ORDER_CREATED)
-            sendMessage.send_message()
-            
-            handle_log_engine(
-                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Custom Offer Created by Customer", entity=instance,
-                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
-                notify=True, logify=True, 
-                role=UserRole.USER
-            )
-            handle_log_engine(
-                request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Create a New Custom Order from Client", entity=instance,
-                perform_user=instance.provider.user, perform_user_type=UserDefault.PROVIDER,
-                notify=True, logify=True,
-                role=UserRole.USER
-            )
-            return Response(
-                {
-                    'status': True,
-                    'message': 'Custom offer created!',
-                    'data': serializer.data
-                }, status=status.HTTP_201_CREATED
-            )
+            with transaction.atomic():
+                serializer = self.get_serializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                self.perform_create(serializer)
+                instance = serializer.instance
+                
+                room = self.get_room(instance)
+                sendMessage = PushSendMessage(request, room)
+                sendMessage.order_chat_message(UserDefault.CUSTOMER, instance, message_type=SendMessageType.EVENT, event_type=SendEventType.ORDER_CREATED)
+                sendMessage.send_message()
+                
+                handle_log_engine(
+                    request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Custom Offer Created by Customer", entity=instance,
+                    perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                    notify=True, logify=True, 
+                    role=UserRole.USER
+                )
+                handle_log_engine(
+                    request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Create a New Custom Order from Client", entity=instance,
+                    perform_user=instance.provider.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True, logify=True,
+                    role=UserRole.USER
+                )
+                return Response(
+                    {
+                        'status': True,
+                        'message': 'Custom offer created!',
+                        'data': serializer.data
+                    }, status=status.HTTP_201_CREATED
+                )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             handle_log_engine(

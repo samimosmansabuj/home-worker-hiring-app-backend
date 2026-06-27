@@ -12,6 +12,7 @@ from math import radians, cos, sin, asin, sqrt
 from core.services.slot_status_engine import SlotStatusEngine
 from django.utils import timezone
 import requests
+from account.models import CustomerProfile
 
 # ============================================================
 # Category Serializers Section ===================
@@ -34,6 +35,28 @@ class ServiceCategorySerializer(serializers.ModelSerializer):
 
 # ==========================================================================================
 # =================== Order Section Start===================================
+class CustomerInfoSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source="user.username", read_only=True)
+    full_name = serializers.CharField(source="user.full_name", read_only=True)
+    email = serializers.EmailField(source="user.email", read_only=True)
+    phone = serializers.CharField(source="user.phone", read_only=True)
+    photo = serializers.ImageField(source="user.photo", read_only=True)
+
+    class Meta:
+        model = CustomerProfile
+        fields = ["id","username","full_name","email","phone","photo", "rating","total_orders","completed_orders","is_verified"]
+
+class ProviderInfoSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source="user.username", read_only=True)
+    full_name = serializers.CharField(source="user.full_name", read_only=True)
+    email = serializers.EmailField(source="user.email", read_only=True)
+    phone = serializers.CharField(source="user.phone", read_only=True)
+    photo = serializers.ImageField(source="user.photo", read_only=True)
+
+    class Meta:
+        model = ServiceProviderProfile
+        fields = ["id", "company_name", "username", "full_name", "email", "phone", "photo", "hourly_rate", "rating", "availability_status", "is_verified",]
+
 class OrderAttachmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderAttachment
@@ -48,19 +71,26 @@ class OrderAttachmentSerializer(serializers.ModelSerializer):
 
 class OrderSerializerAll(serializers.ModelSerializer):
     provider_id = serializers.IntegerField(write_only=True)
-    attachments = serializers.ListField(
-        child=serializers.FileField(),
-        write_only=True,
-        required=False
-    )
-    working_start_time = serializers.TimeField(
-        input_formats=["%I:%M %p", "%H:%M"]
-    )
-
+    attachments = serializers.ListField(child=serializers.FileField(), write_only=True, required=False)
+    
+    customer = CustomerInfoSerializer(read_only=True)
+    provider = ProviderInfoSerializer(read_only=True)
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    working_start_time = serializers.TimeField(input_formats=["%I:%M %p", "%H:%M"])
+    
+    is_provider_review = serializers.SerializerMethodField()
+    is_customer_review = serializers.SerializerMethodField()
+    
     class Meta:
         model = Order
         fields = "__all__"
         read_only_fields = ["status", "payment_status", "accepted_at", "started_at", "completed_at", "created_at", "updated_at"]
+    
+    def get_is_provider_review(self, obj):
+        return ReviewAndRating.objects.filter(order=obj,send_by=UserDefault.PROVIDER).exists()
+
+    def get_is_customer_review(self, obj):
+        return ReviewAndRating.objects.filter(order=obj, send_by=UserDefault.CUSTOMER).exists()
     
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -73,13 +103,43 @@ class OrderSerializerAll(serializers.ModelSerializer):
             raise serializers.ValidationError("Provider not found")
         return value
 
+    def validate(self, attrs):        
+        provider = ServiceProviderProfile.objects.get(id=attrs.get("provider_id"))
+        date = attrs.get("working_date")
+        time = attrs.get("working_start_time")
+
+        if not date and not time:
+            raise serializers.ValidationError("Date or time must be provided.")
+
+        slot_start_dt = datetime.combine(date, time)
+        slot_end_dt = slot_start_dt + timedelta(hours=1)
+
+        # SLOT ENGINE CALL
+        slot_engine = SlotStatusEngine()
+        slot_status = slot_engine.get_status(
+            provider=provider,
+            date_obj=date,
+            slot_start=slot_start_dt,
+            slot_end=slot_end_dt
+        )
+
+        if slot_status != HelperSlotExceptionType.AVAILABLE:
+            status_map = {
+                "BOOKED": "Already booked",
+                "UNAVAILABLE": "Provider unavailable",
+                "FREEZED": "Temporarily locked",
+            }
+            raise serializers.ValidationError({
+                "slot": status_map.get(slot_status, "Not available")
+            })
+        return attrs
+    
     def create(self, validated_data):
         request = self.context.get("request")
-        provider_id = validated_data.pop("provider_id")
         attachments = validated_data.pop("attachments", [])
 
         validated_data["customer"] = request.user.customer_profile
-        validated_data["provider"] = ServiceProviderProfile.objects.get(id=provider_id)
+        validated_data["provider"] = ServiceProviderProfile.objects.get(id=validated_data.pop("provider_id"))
 
         order = Order.objects.create(
             **validated_data
