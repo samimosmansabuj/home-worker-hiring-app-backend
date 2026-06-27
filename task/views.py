@@ -21,6 +21,8 @@ from chat_notify.utils import PushSendMessage
 from chat_notify.models import ChatRoom
 from core.services.slot_status_engine import SlotStatusEngine
 from django.db import transaction
+from rest_framework.views import APIView
+from account.models import ServiceProviderProfile, HelperWeeklyAvailability
 
 # ============================================================
 # Category Views Section ===================
@@ -58,6 +60,62 @@ class ServiceSubCategoryViewSet(UpdateModelViewSet):
 # ========Order Views Section===================
 
 # -----------Custom Offer Order Start-------------
+class GetHelperDateAvailablity(APIView):
+    def get(self, request, provider_id, date):
+        from core.services.slot_status_engine import SlotStatusEngine
+        try:
+            provider = ServiceProviderProfile.objects.get(id=provider_id)
+            date_obj = datetime.strptime(date, "%d-%m-%Y").date()
+            weekday = date_obj.strftime("%a")
+
+            # Load Weekly Availability and show "No available slots for this date." if no availability for this date
+            availability = HelperWeeklyAvailability.objects.filter(provider=provider, day=weekday).first()
+            slot_duration = availability.slot_duration_minutes if availability else 60
+            # Full Day Slot Generation (12:00 AM to 11:59 PM)
+            day_start = datetime.combine(date_obj, datetime.min.time())
+            day_end = datetime.combine(date_obj + timedelta(days=1), datetime.min.time())
+            
+            # Slot Generation
+            slots = []
+            current_time = day_start
+            while current_time + timedelta(minutes=slot_duration) <= day_end:
+                slot_start = current_time
+                slot_end = current_time + timedelta(minutes=slot_duration)
+
+                # SLOT STATUS ENGINE CALL
+                slot_engine = SlotStatusEngine()
+                slot_status = slot_engine.get_status(
+                    provider=provider,
+                    date_obj=date_obj,
+                    slot_start=slot_start,
+                    slot_end=slot_end
+                )
+                slots.append({
+                    "slot": f"{slot_start.strftime('%I:%M %p')} - {slot_end.strftime('%I:%M %p')}",
+                    "start_time": slot_start.strftime("%I:%M %p"),
+                    "end_time": slot_end.strftime("%I:%M %p"),
+                    "status": slot_status
+                })
+                current_time += timedelta(minutes=slot_duration)
+            return Response(
+                {
+                    "status": True,
+                    "count": len(slots),
+                    "data": {
+                        "date": date_obj,
+                        "day": weekday,
+                        "slots": slots
+                    }
+                }, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "status": False,
+                    "message": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST
+            )
+
 class CustomerOrderCreateViews(CreateAPIView):
     serializer_class = OrderSerializerAll
     permission_classes = [IsAuthenticated]

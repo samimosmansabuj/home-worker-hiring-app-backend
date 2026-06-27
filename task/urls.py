@@ -1,5 +1,5 @@
 from django.urls import path, include
-from .views import ServiceCategoryViewSet, ServiceSubCategoryViewSet, ReviewAndRatingViewSets, CustomerOrderViewSet, ProviderOrderViewSet, PaymentTransactionViewSets, CustomerOrderCreateViews, CustomerOrderViewSet, ProviderOrderViewSet
+from .views import ServiceCategoryViewSet, ServiceSubCategoryViewSet, ReviewAndRatingViewSets, CustomerOrderViewSet, ProviderOrderViewSet, PaymentTransactionViewSets, CustomerOrderCreateViews, CustomerOrderViewSet, ProviderOrderViewSet, GetHelperDateAvailablity
 from rest_framework.routers import DefaultRouter
 
 
@@ -24,5 +24,6 @@ urlpatterns = [
     
     path("order-create/", CustomerOrderCreateViews.as_view(), name="order-create"),
     path("order/", include(order_router.urls)),
+    path("get-helper-availablity/<int:provider_id>/<str:date>/", GetHelperDateAvailablity.as_view(), name="get-helper-availablity")
 ]
 
