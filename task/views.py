@@ -23,6 +23,7 @@ from core.services.slot_status_engine import SlotStatusEngine
 from django.db import transaction
 from rest_framework.views import APIView
 from account.models import ServiceProviderProfile, HelperWeeklyAvailability
+from core.services.slot_status_engine import SlotStatusEngine
 
 # ============================================================
 # Category Views Section ===================
@@ -62,7 +63,14 @@ class ServiceSubCategoryViewSet(UpdateModelViewSet):
 # -----------Custom Offer Order Start-------------
 class GetHelperDateAvailablity(APIView):
     def get(self, request, provider_id, date):
-        from core.services.slot_status_engine import SlotStatusEngine
+        working_hour = self.request.query_params.get("working_hour", None)
+        if working_hour:
+            return Response(
+                {
+                    "stauts": True,
+                    "message": "For this hour, Slot is available!"
+                }, status=status.HTTP_200_OK
+            )
         try:
             provider = ServiceProviderProfile.objects.get(id=provider_id)
             date_obj = datetime.strptime(date, "%d-%m-%Y").date()
