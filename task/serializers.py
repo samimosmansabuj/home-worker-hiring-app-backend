@@ -77,6 +77,7 @@ class OrderSerializerAll(serializers.ModelSerializer):
     provider = ProviderInfoSerializer(read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True)
     working_start_time = serializers.TimeField(input_formats=["%I:%M %p", "%H:%M"])
+    working_hour = serializers.IntegerField(required=False)
     
     is_provider_review = serializers.SerializerMethodField()
     is_customer_review = serializers.SerializerMethodField()
@@ -93,9 +94,16 @@ class OrderSerializerAll(serializers.ModelSerializer):
         return ReviewAndRating.objects.filter(order=obj, send_by=UserDefault.CUSTOMER).exists()
     
     def to_representation(self, instance):
+        context = self.context
+        profile_type = context.get("profile_type")
+        
         data = super().to_representation(instance)
         attachments_list = OrderAttachmentSerializer(instance.order_attachments, many=True, context=self.context).data
         data["attachments"] = attachments_list
+        
+        if profile_type == UserDefault.PROVIDER:
+            data.pop("confirmation_OTP")
+        
         return data
 
     def validate_provider_id(self, value):
@@ -107,12 +115,13 @@ class OrderSerializerAll(serializers.ModelSerializer):
         provider = ServiceProviderProfile.objects.get(id=attrs.get("provider_id"))
         date = attrs.get("working_date")
         time = attrs.get("working_start_time")
+        working_hour = attrs.get("working_hour", 1)
 
         if not date and not time:
             raise serializers.ValidationError("Date or time must be provided.")
 
         slot_start_dt = datetime.combine(date, time)
-        slot_end_dt = slot_start_dt + timedelta(hours=1)
+        slot_end_dt = slot_start_dt + timedelta(hours=working_hour)
 
         # SLOT ENGINE CALL
         slot_engine = SlotStatusEngine()

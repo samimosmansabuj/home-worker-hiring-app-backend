@@ -36,6 +36,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if hasattr(self, "room_group_name"):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
     
+    def send(self, text_data = None, bytes_data = None, close = False):
+        return super().send(text_data, bytes_data, close)
+    
     async def receive(self, text_data):
         data = json.loads(text_data or "{}")
         message = (data.get("message") or "").strip()

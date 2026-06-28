@@ -24,6 +24,7 @@ from django.db import transaction
 from rest_framework.views import APIView
 from account.models import ServiceProviderProfile, HelperWeeklyAvailability
 from core.services.slot_status_engine import SlotStatusEngine
+from find_worker_config.model_choice import DayStatus
 
 # ============================================================
 # Category Views Section ===================
@@ -62,14 +63,80 @@ class ServiceSubCategoryViewSet(UpdateModelViewSet):
 
 # -----------Custom Offer Order Start-------------
 class GetHelperDateAvailablity(APIView):
+    def get_date_available_slot(self, provider, date_obj, slot_duration=60):
+        day_start = datetime.combine(date_obj, datetime.min.time())
+        day_end = datetime.combine(date_obj + timedelta(days=1), datetime.min.time())
+        
+        slots = []
+        current_time = day_start
+        while current_time + timedelta(minutes=slot_duration) <= day_end:
+            slot_start = current_time
+            slot_end = current_time + timedelta(minutes=slot_duration)
+            slot_status = self.get_slot_check(provider, date_obj, slot_start, slot_end)
+            if slot_status == DayStatus.AVAILABLE:
+                slots.append({
+                    "slot": f"{slot_start.strftime('%I:%M %p')} - {slot_end.strftime('%I:%M %p')}",
+                    "start_time": slot_start.strftime("%I:%M %p"),
+                    "end_time": slot_end.strftime("%I:%M %p"),
+                    "status": slot_status
+                })
+            current_time += timedelta(minutes=slot_duration)
+        
+        return slots
+    
+    def get_slot_check(self, provider, date, slot_start_dt, slot_end_dt):
+        slot_engine = SlotStatusEngine()
+        slot_status = slot_engine.get_status(
+            provider=provider,
+            date_obj=date,
+            slot_start=slot_start_dt,
+            slot_end=slot_end_dt
+        )
+        return slot_status
+    
+    def check_by_working_hour(self, provider, date, time, working_hour):
+        if not date and not time:
+            raise ValidationError("Date or time must be provided.")
+
+        # Convert string to date
+        if isinstance(date, str):
+            date = datetime.strptime(date, "%d-%m-%Y").date()
+        # Convert string to time
+        if isinstance(time, str):
+            try:
+                time = datetime.strptime(time, "%I:%M %p").time()
+            except ValueError:
+                time = datetime.strptime(time, "%H:%M").time()
+        working_hour = int(working_hour)
+
+        slot_start_dt = datetime.combine(date, time)
+        slot_end_dt = slot_start_dt + timedelta(hours=working_hour)
+
+        if self.get_slot_check(provider, date, slot_start_dt, slot_end_dt) != HelperSlotExceptionType.AVAILABLE:
+            return Response(
+                {
+                    "status": False,
+                    "is_available": False,
+                    "message": f"For {working_hour} hour, Slot is unavailable!",
+                    "available_slot": self.get_date_available_slot(provider, date)
+                }, status=status.HTTP_200_OK
+            )
+        return Response(
+                {
+                    "stauts": True,
+                    "is_availasble": True,
+                    "message": f"For {working_hour} hour, Slot is available!",
+                    "slot": f"{slot_start_dt.strftime('%I:%M %p')} - {slot_end_dt.strftime('%I:%M %p')}"
+                }, status=status.HTTP_200_OK
+            )
+    
     def get(self, request, provider_id, date):
         working_hour = self.request.query_params.get("working_hour", None)
         if working_hour:
-            return Response(
-                {
-                    "stauts": True,
-                    "message": "For this hour, Slot is available!"
-                }, status=status.HTTP_200_OK
+            start_time = self.request.query_params.get("start_time")
+            return self.check_by_working_hour(
+                ServiceProviderProfile.objects.get(id=provider_id),
+                date, start_time, working_hour,
             )
         try:
             provider = ServiceProviderProfile.objects.get(id=provider_id)
@@ -78,33 +145,9 @@ class GetHelperDateAvailablity(APIView):
 
             # Load Weekly Availability and show "No available slots for this date." if no availability for this date
             availability = HelperWeeklyAvailability.objects.filter(provider=provider, day=weekday).first()
-            slot_duration = availability.slot_duration_minutes if availability else 60
-            # Full Day Slot Generation (12:00 AM to 11:59 PM)
-            day_start = datetime.combine(date_obj, datetime.min.time())
-            day_end = datetime.combine(date_obj + timedelta(days=1), datetime.min.time())
-            
-            # Slot Generation
-            slots = []
-            current_time = day_start
-            while current_time + timedelta(minutes=slot_duration) <= day_end:
-                slot_start = current_time
-                slot_end = current_time + timedelta(minutes=slot_duration)
-
-                # SLOT STATUS ENGINE CALL
-                slot_engine = SlotStatusEngine()
-                slot_status = slot_engine.get_status(
-                    provider=provider,
-                    date_obj=date_obj,
-                    slot_start=slot_start,
-                    slot_end=slot_end
-                )
-                slots.append({
-                    "slot": f"{slot_start.strftime('%I:%M %p')} - {slot_end.strftime('%I:%M %p')}",
-                    "start_time": slot_start.strftime("%I:%M %p"),
-                    "end_time": slot_end.strftime("%I:%M %p"),
-                    "status": slot_status
-                })
-                current_time += timedelta(minutes=slot_duration)
+            slot_duration = 60
+            # slot_duration = availability.slot_duration_minutes if availability else 60
+            slots = self.get_date_available_slot(provider, date_obj, slot_duration)
             return Response(
                 {
                     "status": True,

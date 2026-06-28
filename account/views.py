@@ -30,7 +30,7 @@ from datetime import timedelta
 from django.utils import timezone
 from django.db.models import Sum
 from collections import defaultdict
-from task.serializers import PaymentTransaction, PaymentTransactionDetailSerializer
+from task.serializers import PaymentTransaction, PaymentTransactionDetailSerializer, OrderSerializerAll
 
 from rest_framework.decorators import action
 User = get_user_model()
@@ -842,7 +842,7 @@ class NextJobOrdersView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from task.serializers import OrderSerializer
+        from task.serializers import OrderSerializerAll
         try:
             provider = request.user.hasServiceProviderProfile
             next_orders = Order.objects.filter(
@@ -850,7 +850,7 @@ class NextJobOrdersView(APIView):
                 status__in=[OrderStatus.ACCEPT, OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS],
                 payment_status__in=[OrderPaymentStatus.PAID]
             ).order_by('working_date')[:3]
-            serializer = OrderSerializer(next_orders, many=True, context={"request": request})
+            serializer = OrderSerializerAll(next_orders, many=True, context={"request": request})
             return Response(
                 {
                     "status": True,
