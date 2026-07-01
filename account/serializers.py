@@ -25,7 +25,7 @@ import requests as req
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.files.base import ContentFile
-
+from .emailsend import EmailOTPSend
 # User = get_user_model()
 
 
@@ -74,7 +74,10 @@ class LoginOTPRequestSerializer(serializers.Serializer):
             code=otp_code,
             purpose=OTPType.LOGIN,
         )
+        
+        
         # self.send_otp(otp_obj.code)
+        EmailOTPSend(otp_obj)
         if self.phone:
             return {"phone": self.phone}
         return {"email": self.email}
@@ -207,6 +210,7 @@ class SignupSerializer(serializers.ModelSerializer):
             email=self.user.email,
             purpose=OTPType.SIGNUP
         )
+        EmailOTPSend(otp)
         return otp.email
 
 # SignUp With OTP End===========================

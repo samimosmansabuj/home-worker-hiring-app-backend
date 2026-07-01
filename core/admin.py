@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Ticket, TicketReply, AddOfferVoucher, AdminWallet, SignUpSlider, CustomerScreenSlide
+from .models import Ticket, TicketReply, AddOfferVoucher, AdminWallet, SignUpSlider, CustomerScreenSlide, EmailConfig
 from unfold.admin import ModelAdmin
 
 @admin.register(Ticket)
@@ -206,5 +206,22 @@ class AdminWalletAdmin(ModelAdmin):
                 "update_at",
             )
         }),
+    )
+
+@admin.register(EmailConfig)
+class EmailConfigAdmin(ModelAdmin):
+    list_display = ("name", "email", "type", "host", "port", "is_default", "is_active", "today_count", "daily_limit", "today_complete")
+
+    list_filter = ("type", "is_default", "is_active", "tls", "ssl", "today_complete")
+
+    search_fields = ("name", "email", "host", "host_user")
+
+    readonly_fields = ("today_count", "today_date", "today_complete")
+
+    fieldsets = (
+        ("Email Configuration", {"fields": ("type", "name", "email", "is_default", "is_active")}),
+        ("SMTP Settings", {"fields": ("host", "port", "host_user", "host_password", "tls", "ssl")}),
+        ("API Configuration", {"fields": ("server", "api_key")}),
+        ("Daily Limit", {"fields": ("daily_limit", "today_count", "today_date", "today_complete")}),
     )
 

@@ -209,6 +209,9 @@ class TicketUserProfileType(models.TextChoices):
     CUSTOMER = "CUSTOMER", _("Customer")
     PROVIDER = "PROVIDER", _("Provider")
 
+class MailConfigType(models.TextChoices):
+    SMTP = "smtp"
+    API = "api"
 
 
 

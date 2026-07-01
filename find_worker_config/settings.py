@@ -209,6 +209,7 @@ UNFOLD = {
                 "separator": True,
                 "items": [
                     {"title": "OTP Logs", "link": "/admin/account/otp/"},
+                    {"title": "Email Configuaration", "link": "/admin/core/emailconfig/"},
                     {"title": "Provider Verification", "link": "/admin/account/providerverification/"},
                     {"title": "Referrals", "link": "/admin/account/referral/"},
                     {"title": "Vouchers", "link": "/admin/account/voucher/"},
