@@ -52,6 +52,7 @@ class OrderAdmin(ModelAdmin):
     list_filter = (
         "status",
         "payment_status",
+        "order_change_action",
         "category",
     )
 
@@ -76,6 +77,7 @@ class OrderAdmin(ModelAdmin):
                 "provider",
                 "status",
                 "payment_status",
+                "order_change_action",
             )
         }),
 

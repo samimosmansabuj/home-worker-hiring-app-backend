@@ -8,7 +8,7 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from find_worker_config.permissions import IsAdminWritePermissionOnly, ForCustomerProfile, ForAdminProfile
-from find_worker_config.model_choice import UserRole, OrderStatus, OrderPaymentStatus, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault, LogStatus, HelperSlotExceptionType, OrderChangesRequestStatus, ChangesRequestType, SendMessageType, SendEventType
+from find_worker_config.model_choice import UserRole, OrderStatus, OrderPaymentStatus, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault, LogStatus, HelperSlotExceptionType, OrderChangesRequestStatus, ChangesRequestType, SendMessageType, SendEventType, OrderChangeRequestAction
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -456,9 +456,12 @@ class CustomerOrderViewSet(UpdateModelViewSet):
         order = self.get_object()
         if order.status != OrderStatus.PENDING:
             raise ValueError(f"Order already {order.status}.")
+        if order.order_change_action == OrderChangeRequestAction.CUSTOMER_COUNTER_SEND:
+            raise ValueError("You can't accept the order now.")
         with transaction.atomic():
             order.status = OrderStatus.ACCEPT
             order.accepted_at = timezone.localtime(timezone.now())
+            order.order_change_action = OrderChangeRequestAction.NO_ACTION
             order.save()
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.FREEZED)
@@ -753,22 +756,23 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     def give_feedback(self, request, *args, **kwargs):
         order = self.get_object()
         try:
-            serializer = ReviewAndRatingSerializer(data=request.data, context={"order": order, "send_by": UserDefault.CUSTOMER, "request": request})
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            
-            handle_log_engine(
-                request=request, action="SEND FEEDBACK", status=LogStatus.SUCCESS, message="Send Feedback with this Order.", entity=order,
-                perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
-                notify=True, logify=True,
-                role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Received Feedback with this Order."
-            )
-            return Response(
-                {
-                    "status": True,
-                    "message": "Thanks for your feedback!"
-                }, status=status.HTTP_200_OK
-            )
+            with transaction.atomic():
+                serializer = ReviewAndRatingSerializer(data=request.data, context={"order": order, "send_by": UserDefault.CUSTOMER, "request": request})
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                
+                handle_log_engine(
+                    request=request, action="SEND FEEDBACK", status=LogStatus.SUCCESS, message="Send Feedback with this Order.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.CUSTOMER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.provider.user, send_to_type=UserDefault.PROVIDER, notification_message="Received Feedback with this Order."
+                )
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Thanks for your feedback!"
+                    }, status=status.HTTP_200_OK
+                )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             handle_log_engine(
@@ -998,9 +1002,13 @@ class ProviderOrderViewSet(UpdateModelViewSet):
         order = self.get_object()
         if order.status != OrderStatus.PENDING:
             raise ValueError(f"Order already {order.status}.")
+        if order.order_change_action == OrderChangeRequestAction.PROVIDER_COUNTER_SEND:
+            raise ValueError("You can't accept the order now.")
+        
         with transaction.atomic():
             order.status = OrderStatus.ACCEPT
             order.accepted_at = timezone.localtime(timezone.now())
+            order.order_change_action = OrderChangeRequestAction.NO_ACTION
             order.save()
 
             self.get_or_create_slot_exception(order, HelperSlotExceptionType.FREEZED)
@@ -1347,21 +1355,22 @@ class ProviderOrderViewSet(UpdateModelViewSet):
     def give_feedback(self, request, *args, **kwargs):
         order = self.get_object()
         try:
-            serializer = ReviewAndRatingSerializer(data=request.data, context={"order": order, "send_by": UserDefault.PROVIDER, "request": request})
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            handle_log_engine(
-                request=request, action="SEND FEEDBACK", status=LogStatus.SUCCESS, message="Send Feedback with this Order.", entity=order,
-                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
-                notify=True, logify=True,
-                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Received Feedback with this Order."
-            )
-            return Response(
-                {
-                    "status": True,
-                    "message": "Thanks for your feedback!"
-                }, status=status.HTTP_200_OK
-            )
+            with transaction.atomic():
+                serializer = ReviewAndRatingSerializer(data=request.data, context={"order": order, "send_by": UserDefault.PROVIDER, "request": request})
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                handle_log_engine(
+                    request=request, action="SEND FEEDBACK", status=LogStatus.SUCCESS, message="Send Feedback with this Order.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER, notification_message="Received Feedback with this Order."
+                )
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Thanks for your feedback!"
+                    }, status=status.HTTP_200_OK
+                )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             handle_log_engine(

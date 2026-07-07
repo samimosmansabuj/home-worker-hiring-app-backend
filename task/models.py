@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from django.db import models
 from account.models import User, CustomerProfile, ServiceProviderProfile
-from find_worker_config.model_choice import ChangesRequestType, OrderChangesRequestStatus, OrderStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault
+from find_worker_config.model_choice import ChangesRequestType, OrderChangesRequestStatus, OrderStatus, ReviewRatingChoice, OrderPaymentStatus, PaymentCurrencyType, PaymentTransactionType, PaymentAction, RefundStatus, UserDefault, OrderChangeRequestAction
 from django.db import transaction
 from django.contrib.contenttypes.fields import GenericRelation, GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -55,6 +55,7 @@ class Order(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING)
     payment_status = models.CharField(max_length=20, choices=OrderPaymentStatus.choices, default=OrderPaymentStatus.UNPAID)
+    order_change_action = models.CharField(max_length=40, choices=OrderChangeRequestAction.choices, default=OrderChangeRequestAction.NO_ACTION)
     working_date = models.DateField(blank=True, null=True)
     working_start_time = models.TimeField(blank=True, null=True)
     working_hour = models.PositiveIntegerField(default=1)

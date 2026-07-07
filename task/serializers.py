@@ -1,6 +1,6 @@
 from .models import ServiceCategory, ServiceSubCategory, Order, ReviewAndRating, PaymentTransaction, ServiceSubCategory, OrderRefundRequest, OrderPaymentStatus, OrderAttachment, OrderChangesRequest
 from rest_framework import serializers
-from find_worker_config.model_choice import OrderStatus, UserDefault, OrderChangesRequestStatus, ChangesRequestType, HelperSlotExceptionType, ReviewRatingChoice
+from find_worker_config.model_choice import OrderStatus, UserDefault, OrderChangesRequestStatus, ChangesRequestType, HelperSlotExceptionType, ReviewRatingChoice, OrderChangeRequestAction
 from account.models import ServiceProviderProfile, HelperSlotException
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import ValidationError
@@ -81,6 +81,7 @@ class OrderSerializerAll(serializers.ModelSerializer):
     
     is_provider_review = serializers.SerializerMethodField()
     is_customer_review = serializers.SerializerMethodField()
+    changes_request_pending = serializers.SerializerMethodField()
     
     class Meta:
         model = Order
@@ -92,6 +93,23 @@ class OrderSerializerAll(serializers.ModelSerializer):
 
     def get_is_customer_review(self, obj):
         return ReviewAndRating.objects.filter(order=obj, send_by=UserDefault.CUSTOMER).exists()
+    
+    def get_changes_request_pending(self, obj):
+        change_request = OrderChangesRequest.objects.filter(
+            order=obj, status=OrderChangesRequestStatus.NO_RESPONSE
+        ).first()
+        if change_request:
+            return {
+                "id": change_request.id,
+                "request_by": change_request.request_by,
+                "status": change_request.status,
+                "changes_type": change_request.changes_type,
+                "changes_data": change_request.changes_data,
+                "created_at": change_request.created_at,
+                "updated_at": change_request.updated_at
+            }
+        else:
+            return None
     
     def to_representation(self, instance):
         context = self.context
@@ -167,10 +185,15 @@ class CounterSerializer(serializers.Serializer):
         message = self.validated_data.get("message")
         order = kwargs.get("order")
         profile_type = kwargs.get("profile_type")
+        
+        if order.status is not OrderStatus.PENDING:
+            raise Exception(f"Order is already {order.status}")
         if OrderChangesRequest.objects.filter(order=order, status=OrderChangesRequestStatus.NO_RESPONSE).exists():
             raise ValueError("One Changes Request not response!")
-        elif OrderChangesRequest.objects.filter(order=order, request_by=profile_type, changes_type=ChangesRequestType.COUNTER).exists():
+        if OrderChangesRequest.objects.filter(order=order, request_by=profile_type, changes_type=ChangesRequestType.COUNTER).exists():
             raise ValueError("Only One counter each side!")
+        if profile_type == UserDefault.CUSTOMER and not OrderChangesRequest.objects.filter(order=order, request_by=UserDefault.PROVIDER).exists():
+            raise ValueError("Provider can send first counter.")
         with transaction.atomic():
             changes_object = OrderChangesRequest.objects.create(
                 order=order,
@@ -183,7 +206,14 @@ class CounterSerializer(serializers.Serializer):
                 }
             )
             self.changes_object = changes_object
+            
+            if profile_type == UserDefault.PROVIDER:
+                order_change_action = OrderChangeRequestAction.PROVIDER_COUNTER_SEND
+            elif profile_type == UserDefault.CUSTOMER:
+                order_change_action = OrderChangeRequestAction.CUSTOMER_COUNTER_SEND
+            
             order.amount = budget
+            order.order_change_action = order_change_action
             order.save()
             return order
     
@@ -385,6 +415,15 @@ class ProposeNewTimeSerializer(serializers.Serializer):
         with transaction.atomic():
             self.response_message = response_message
             self.changes_object = OrderChangesRequest.objects.create(**data)
+            
+            if profile_type == UserDefault.PROVIDER:
+                order_change_action = OrderChangeRequestAction.PROVIDER_TIME_CHANGE_REQUEST_SEND
+            elif profile_type == UserDefault.CUSTOMER:
+                order_change_action = OrderChangeRequestAction.CUSTOMER_TIME_CHANGE_REQUEST_SEND
+            
+            order.order_change_action = order_change_action
+            order.save()
+
             return self.changes_object
     
     def get_response_message(self):
@@ -450,6 +489,7 @@ class ProposeNewTimeActionSerializer(serializers.Serializer):
             time_str = changes_data.get("time")
             order.working_start_time = datetime.strptime(time_str, "%H:%M:%S").time()
             self.response_message = "Propose New Time Accept!"
+        order.order_change_action = OrderChangeRequestAction.NO_ACTION
         order.save()
         return order
     
