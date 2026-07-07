@@ -1,0 +1,2 @@
+msgid "Already Verified!"
+msgstr "您已经验证！"

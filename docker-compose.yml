@@ -1,0 +1,40 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: worker_hiring_backend
+
+    # command: python manage.py runserver 0.0.0.0:8888
+    # command: >
+    #   sh -c "
+    #   python manage.py migrate &&
+    #   gunicorn find_worker_config.wsgi:application --bind 0.0.0.0:8001
+    #   "
+    # command: >
+    #   sh -c "
+    #   python manage.py migrate &&
+    #   gunicorn find_worker_config.wsgi:application
+    #   --bind 0.0.0.0:8001
+    #   --workers 3
+    #   --threads 2
+    #   --timeout 120
+    #   "
+    command: >
+      sh -c "
+      python manage.py migrate &&
+      daphne -b 0.0.0.0 -p 8001 find_worker_config.asgi:application
+      "
+
+    volumes:
+      - .:/app
+
+    ports:
+      - "8001:8001"
+
+    env_file:
+      - .env
+
+    restart: always
+    # restart: unless-stopped
+  

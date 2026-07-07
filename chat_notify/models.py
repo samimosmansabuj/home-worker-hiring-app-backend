@@ -1,0 +1,107 @@
+from django.db import models
+from account.models import CustomerProfile, ServiceProviderProfile, User
+# from task.models import ServiceTask
+from find_worker_config.model_choice import SendMessageType, SendEventType, CustomOfferStatus, NotifyType, UserDefault, UserRole
+import uuid
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import GenericForeignKey
+from account.utils import image_delete_os, previous_image_delete_os
+from task.models import Order, OrderChangesRequest
+import os
+import mimetypes
+
+class ChatRoom(models.Model):
+    uuid = models.CharField(max_length=255, blank=True, null=True, unique=True)
+    customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name="chat_customer")
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="chat_provider")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self.uuid:
+            self.uuid = uuid.uuid4().hex
+        return super().save(*args, **kwargs)
+    
+    class Meta:
+        unique_together = ('customer', 'provider')
+    
+    def __str__(self):
+        return f"ChatRoom: {self.customer.user.username} & {self.provider.user.username}"
+
+class ChatMessage(models.Model):
+    room = models.ForeignKey(ChatRoom, on_delete=models.CASCADE, related_name='messages')
+    sender = models.CharField(max_length=20, choices=UserDefault.choices)
+    message_type = models.CharField(max_length=20, choices=SendMessageType.choices, default=SendMessageType.TEXT)
+    content = models.TextField(blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    is_read = models.BooleanField(default=False)
+    
+    class Meta:
+        ordering = ["-timestamp"]
+    
+    def __str__(self):
+        return f"{self.sender}: {self.content[:20]}"
+
+class ChatEvent(models.Model):
+    message = models.OneToOneField(ChatMessage, on_delete=models.CASCADE, related_name="event")
+    order_object = models.ForeignKey(Order, on_delete=models.SET_NULL, blank=True, null=True)
+    reference_object = models.ForeignKey(OrderChangesRequest, on_delete=models.SET_NULL, blank=True, null=True)
+    event_type = models.CharField(max_length=50, choices=SendEventType.choices, default=SendEventType.ORDER_CREATED)
+    payload = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class Attachment(models.Model):
+    message = models.ForeignKey(ChatMessage, on_delete=models.CASCADE, related_name="attachments")
+    file = models.FileField(upload_to="chat/")
+    mime = models.CharField(max_length=100, blank=True, default="")
+    name = models.CharField(max_length=255, blank=True, default="")
+    size = models.BigIntegerField(default=0)
+
+    def image_update(self, instance):
+        previous_image_delete_os(instance.file, self.file)
+    
+    def delete(self, *args, **kwargs):
+        image_delete_os(self.file)
+        return super().delete(*args, **kwargs)
+    
+    def save(self, *args, **kwargs):
+        # if self.file and not self.pk:
+        #     self.name = os.path.basename(self.file.name)
+        #     try:
+        #         self.size = self.file.size
+        #     except Exception:
+        #         self.size = 0
+        #     mime, _ = mimetypes.guess_type(self.file.name)
+        #     self.mime = mime or ""
+        
+        if self.pk and Attachment.objects.filter(pk=self.pk).exists():
+            instance = Attachment.objects.get(pk=self.pk)
+            self.image_update(instance)
+        super().save(*args, **kwargs)
+
+
+
+class Notification(models.Model):
+    notification_for = models.CharField(max_length=15, choices=UserRole.choices, default=UserRole.ADMIN)
+    receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications", blank=True, null=True)
+    profile = models.CharField(max_length=20, choices=UserDefault.choices, blank=True, null=True)
+    action = models.CharField(max_length=255)
+    message = models.CharField(max_length=255, blank=True, null=True)
+    is_read = models.BooleanField(default=False)
+
+    entity_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, blank=True, null=True)
+    entity_id = models.PositiveIntegerField(blank=True, null=True)
+    service = GenericForeignKey('entity_type', 'entity_id')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def notify_text(self):
+        return f"{self.receiver.first_name} {self.receiver.last_name if self.receiver.last_name else ''} {self.action} at {self.created_at}"
+
+    def __str__(self):
+        return f"{self.receiver.first_name} {self.receiver.last_name if self.receiver.last_name else ''} {self.action} at {self.created_at}"
+    
+
+
