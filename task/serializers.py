@@ -186,7 +186,7 @@ class CounterSerializer(serializers.Serializer):
         order = kwargs.get("order")
         profile_type = kwargs.get("profile_type")
         
-        if order.status is not OrderStatus.PENDING:
+        if order.status != OrderStatus.PENDING:
             raise Exception(f"Order is already {order.status}")
         if OrderChangesRequest.objects.filter(order=order, status=OrderChangesRequestStatus.NO_RESPONSE).exists():
             raise ValueError("One Changes Request not response!")
