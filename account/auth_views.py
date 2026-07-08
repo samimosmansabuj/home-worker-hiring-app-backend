@@ -838,7 +838,7 @@ class PasswordResetRequestView(GenericAPIView):
         try:
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
-            otp_object = serializer.send_code()
+            otp_object = serializer.send_code(request)
 
             self.handle_log(request=request, user=serializer.get_user(), otp_object=otp_object, status=LogStatus.SUCCESS, message="Send Password Reset Request.", notify=True)
             return Response(

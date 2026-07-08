@@ -2,7 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Q
-from find_worker_config.model_choice import  DateStatus, DayStatus, HelperSlotExceptionType, HelperStatus, UserRole, UserLanguage, UserStatus, PaymentMethodType, PayoutMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, LogStatus
+from find_worker_config.model_choice import  DateStatus, DayStatus, HelperSlotExceptionType, HelperStatus, UserRole, UserLanguage, UserStatus, PaymentMethodType, PayoutMethodType, OTPType, UserDefault, DocumentType, DocumentStatus, VOUCHER_DISCOUNT_TYPE, VOUCHER_TYPE, WeekDay, LogStatus, OrderStatus
 from .managers import CustomUserManager
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -180,11 +180,20 @@ class ServiceProviderProfile(models.Model):
     # total_profile_view = models.PositiveBigIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    # @property
-    # def completion_rate(self):
-    #     if self.total_jobs == 0:
-    #         return 0
-    #     return round((self.completed_jobs / self.total_jobs) * 100, 2)
+    
+    def update_complete_rate(self):
+        total_jobs = self.orders_as_provider.count()
+        completed_jobs = self.orders_as_provider.filter(
+            status=OrderStatus.COMPLETED
+        ).count()
+
+        self.total_jobs = total_jobs
+
+        if total_jobs > 0:
+            self.complete_rate = round((completed_jobs / total_jobs) * 100, 2)
+        else:
+            self.complete_rate = 0
+        self.save(update_fields=["total_jobs", "complete_rate"])
     
     class Meta:
         db_table = "service_provider_profiles"

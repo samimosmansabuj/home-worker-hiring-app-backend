@@ -1308,36 +1308,38 @@ class ProviderOrderViewSet(UpdateModelViewSet):
     def complete(self, request, *args, **kwargs):
         order = self.get_object()
         try:
-            if self.get_object().status == OrderStatus.COMPLETED:
-                raise ValueError("Order already complete")
-            elif self.get_object().status != OrderStatus.IN_PROGRESS:
-                raise ValueError("Order must be in progress!")
-            
-            serializer = CompleteSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            serializer.complete(order=self.get_object())
-            
-            order.refresh_from_db()
-            room = self.get_room(order)
-            sendMessage = PushSendMessage(request, room)
-            sendMessage.order_chat_message(
-                UserDefault.PROVIDER, order, message_type=SendMessageType.EVENT,
-                event_type=SendEventType.ORDER_COMPLETE
-            )
-            sendMessage.send_message()
+            with transaction.atomic():
+                if self.get_object().status == OrderStatus.COMPLETED:
+                    raise ValueError("Order already complete")
+                elif self.get_object().status != OrderStatus.IN_PROGRESS:
+                    raise ValueError("Order must be in progress!")
+                
+                serializer = CompleteSerializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                serializer.complete(order=self.get_object())
+                
+                order.update_complete_rate()
+                
+                room = self.get_room(order)
+                sendMessage = PushSendMessage(request, room)
+                sendMessage.order_chat_message(
+                    UserDefault.PROVIDER, order, message_type=SendMessageType.EVENT,
+                    event_type=SendEventType.ORDER_COMPLETE
+                )
+                sendMessage.send_message()
 
-            handle_log_engine(
-                request=request, action="COMPLETE ORDER", status=LogStatus.SUCCESS, message="Mark Complete the order by OTP.", entity=order,
-                perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
-                notify=True, logify=True,
-                role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER
-            )
-            return Response(
-                {
-                    "status": True,
-                    "message": "Work Complete!"
-                }, status=status.HTTP_200_OK
-            )
+                handle_log_engine(
+                    request=request, action="COMPLETE ORDER", status=LogStatus.SUCCESS, message="Mark Complete the order by OTP.", entity=order,
+                    perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
+                    notify=True, logify=True,
+                    role=UserRole.USER, send_to=order.customer.user, send_to_type=UserDefault.CUSTOMER
+                )
+                return Response(
+                    {
+                        "status": True,
+                        "message": "Work Complete!"
+                    }, status=status.HTTP_200_OK
+                )
         except ValidationError:
             error = {key: str(value[0]) for key, value in serializer.errors.items()}
             handle_log_engine(

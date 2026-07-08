@@ -3,6 +3,7 @@ from django.dispatch import receiver
 from .models import ActivityLog, ServiceProviderProfile, ProviderVerification
 from chat_notify.models import Notification
 from chat_notify.utils import push_notification
+from task.models import Order
 
 # @receiver(post_save, sender=ActivityLog)
 # def create_log_notification(sender, instance, created, **kwargs):
@@ -34,4 +35,9 @@ def create_provider_verification_object(sender, instance, created, **kwargs):
             provider=instance
         )
         return True
+
+@receiver(post_save, sender=Order)
+def update_provider_stats(sender, instance, **kwargs):
+    if instance.provider:
+        instance.provider.update_complete_rate()
 

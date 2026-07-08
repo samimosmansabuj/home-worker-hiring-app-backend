@@ -228,7 +228,7 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     def get_user(self):
         return User.objects.get(email=self.user_email)
     
-    def send_code(self):
+    def send_code(self, request):
         # send_mail(
         #     subject="Password Reset",
         #     message=f"Reset your password using this link:\n{reset_link}",
@@ -240,6 +240,7 @@ class PasswordResetRequestSerializer(serializers.Serializer):
             email=self.user_email,
             purpose=OTPType.RESET_PASSWORD
         )
+        EmailOTPSend(otp, request)
         return otp
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
