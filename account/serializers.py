@@ -399,7 +399,7 @@ class CurrentUserHelperSerializer(serializers.ModelSerializer):
                 "review": review.review,
                 "created_at": review.created_at
             }
-            for review in obj.provider_reviews.all()
+            for review in obj.provider_reviews.filter(send_by=UserDefault.CUSTOMER)
         ]
 
     def get_portfolio(self, obj):

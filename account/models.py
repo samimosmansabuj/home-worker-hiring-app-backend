@@ -193,6 +193,9 @@ class ServiceProviderProfile(models.Model):
             self.complete_rate = round((completed_jobs / total_jobs) * 100, 2)
         else:
             self.complete_rate = 0
+        
+        
+        
         self.save(update_fields=["total_jobs", "complete_rate"])
     
     class Meta:

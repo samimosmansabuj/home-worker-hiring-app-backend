@@ -585,7 +585,7 @@ class CompleteSerializer(serializers.Serializer):
             raise ValueError("OTP or Invalid OTP")
 
 class ReviewAndRatingSerializer(serializers.ModelSerializer):
-    review = serializers.CharField(required=True)
+    review = serializers.CharField(required=False)
     rating = serializers.ChoiceField(
         choices=ReviewRatingChoice.choices,
         required=True

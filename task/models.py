@@ -9,6 +9,7 @@ from django.contrib.contenttypes.models import ContentType
 import secrets
 import string
 from rest_framework.exceptions import ValidationError
+from django.db.models import Avg
 
 # ============================================================
 # Category Models Section ===================
@@ -117,6 +118,27 @@ class ReviewAndRating(models.Model):
     is_approved = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    def save(self, *args, **kwargs):
+        if self.send_by == UserDefault.CUSTOMER:
+            provider = self.provider
+            avg_rating = ReviewAndRating.objects.filter(
+                provider=provider, send_by=UserDefault.CUSTOMER
+            ).aggregate(
+                avg=Avg("rating")
+            )["avg"] or 0
+            provider.rating = avg_rating
+            provider.save()
+        elif self.send_by == UserDefault.PROVIDER:
+            customer = self.customer
+            avg_rating = ReviewAndRating.objects.filter(
+                customer=customer, send_by=UserDefault.CUSTOMER
+            ).aggregate(
+                avg=Avg("rating")
+            )["avg"] or 0
+            customer.rating = avg_rating
+            customer.save()
+        return super().save(*args, **kwargs)
 
 class OrderRefundRequest(models.Model):
     order = models.OneToOneField(Order, on_delete=models.SET_NULL, related_name="refund_request", blank=True, null=True)
