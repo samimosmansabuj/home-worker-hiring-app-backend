@@ -1319,6 +1319,7 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 serializer.complete(order=self.get_object())
                 
                 # order.update_complete_rate()
+                order.save()
                 
                 room = self.get_room(order)
                 sendMessage = PushSendMessage(request, room)
