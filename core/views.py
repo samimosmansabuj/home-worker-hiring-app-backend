@@ -340,6 +340,8 @@ class HelperListViewset(UpdateReadOnlyModelViewSet):
             "service_category"
         ).exclude(
             user=user
+        ).filter(
+            availability_status=True
         )
         return helper_list
     

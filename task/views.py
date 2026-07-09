@@ -456,7 +456,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
         order = self.get_object()
         if order.status != OrderStatus.PENDING:
             raise ValueError(f"Order already {order.status}.")
-        if order.order_change_action == OrderChangeRequestAction.CUSTOMER_COUNTER_SEND:
+        if order.order_change_action != OrderChangeRequestAction.PROVIDER_COUNTER_SEND:
             raise ValueError("You can't accept the order now.")
         with transaction.atomic():
             order.status = OrderStatus.ACCEPT
@@ -1318,7 +1318,7 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 serializer.is_valid(raise_exception=True)
                 serializer.complete(order=self.get_object())
                 
-                order.update_complete_rate()
+                # order.update_complete_rate()
                 
                 room = self.get_room(order)
                 sendMessage = PushSendMessage(request, room)
