@@ -573,12 +573,12 @@ class CompleteSerializer(serializers.Serializer):
         otp = self.validated_data.get("otp", None)
         if otp and order.confirmation_OTP == otp:
             with transaction.atomic():
-                Order.objects.filter(pk=order.id).update(
-                    status=OrderStatus.COMPLETED,
-                    completed_at=timezone.now(),
-                    updated_at=timezone.now()
-                )
-                HelperSlotException.objects.filter(order=order).update(is_active=False)
+                order = Order.objects.get(pk=order.id)
+                order.status = OrderStatus.COMPLETED
+                order.completed_at = timezone.now()
+                order.updated_at = timezone.now()
+                order.save()
+                HelperSlotException.objects.filter(order=order).update(is_active=True)
                 order.refresh_from_db()
                 return order
         else:
