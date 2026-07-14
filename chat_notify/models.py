@@ -98,7 +98,8 @@ class Notification(models.Model):
 
     @property
     def notify_text(self):
-        return f"{self.receiver.first_name} {self.receiver.last_name if self.receiver.last_name else ''} {self.action} at {self.created_at}"
+        created_at = self.created_at.strftime("%Y-%m-%d %I:%M %p")
+        return f"{self.receiver.first_name} {self.receiver.last_name if self.receiver.last_name else ''} {self.action} at {created_at}"
 
     def __str__(self):
         return f"{self.receiver.first_name} {self.receiver.last_name if self.receiver.last_name else ''} {self.action} at {self.created_at}"

@@ -422,7 +422,7 @@ class UserSignUpOTPVerifyView(GenericAPIView):
                 }
                 log_engine = LogActivityEngine(data)
                 log_engine.create_log(user)
-                log_engine.send_notification(UserRole.USER, user)
+                # log_engine.send_notification(UserRole.USER, user)
                 return Response(
                     {
                         "status": True,
