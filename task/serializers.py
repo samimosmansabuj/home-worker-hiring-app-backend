@@ -79,37 +79,22 @@ class OrderSerializerAll(serializers.ModelSerializer):
     working_start_time = serializers.TimeField(input_formats=["%I:%M %p", "%H:%M"])
     working_hour = serializers.IntegerField(required=False)
     
-    is_provider_review = serializers.SerializerMethodField()
-    is_customer_review = serializers.SerializerMethodField()
-    changes_request_pending = serializers.SerializerMethodField()
+    # -------- Order Property Fields --------
+    end_time = serializers.ReadOnlyField()
+    end_datetime = serializers.ReadOnlyField()
+
+    is_provider_review = serializers.ReadOnlyField()
+    is_customer_review = serializers.ReadOnlyField()
+    is_cancel_request = serializers.ReadOnlyField()
+    cancel_request_by = serializers.ReadOnlyField()
+    cancel_request_accept_by = serializers.ReadOnlyField()
+
+    changes_request_pending = serializers.ReadOnlyField()
     
     class Meta:
         model = Order
         fields = "__all__"
         read_only_fields = ["status", "payment_status", "accepted_at", "started_at", "completed_at", "created_at", "updated_at"]
-    
-    def get_is_provider_review(self, obj):
-        return ReviewAndRating.objects.filter(order=obj,send_by=UserDefault.PROVIDER).exists()
-
-    def get_is_customer_review(self, obj):
-        return ReviewAndRating.objects.filter(order=obj, send_by=UserDefault.CUSTOMER).exists()
-    
-    def get_changes_request_pending(self, obj):
-        change_request = OrderChangesRequest.objects.filter(
-            order=obj, status=OrderChangesRequestStatus.NO_RESPONSE
-        ).first()
-        if change_request:
-            return {
-                "id": change_request.id,
-                "request_by": change_request.request_by,
-                "status": change_request.status,
-                "changes_type": change_request.changes_type,
-                "changes_data": change_request.changes_data,
-                "created_at": change_request.created_at,
-                "updated_at": change_request.updated_at
-            }
-        else:
-            return None
     
     def to_representation(self, instance):
         context = self.context

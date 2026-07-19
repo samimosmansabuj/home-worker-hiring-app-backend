@@ -44,29 +44,6 @@ class PushSendMessage:
     def get_payload(self, message, order=None, attachment=None):
         payload = ChatMessageSpecialSerializer(message).data
         payload["type"] = "chat_message"
-        # payload = {
-        #     "type": 'chat_message',
-        #     "id": message.id,
-        #     "message_type": message.message_type,
-        #     "content": message.content,
-        #     "timestamp": message.timestamp.isoformat(),
-        #     "is_read": message.is_read,
-            
-        #     "attachments": [],
-        #     "event": [],
-            
-        #     "sender": message.sender,
-        #     "sender_data": {
-        #         "first_name": self.request.user.first_name,
-        #         "last_name": self.request.user.last_name,
-        #         "photo": self.request.user.photo if self.request.user.photo else None,
-        #         "user": self.request.user.role,
-        #     },
-        # }
-        # if order:
-        #     payload["event"] = message.event.payload
-        # if attachment:
-        #     payload["attachments"] = str(attachment)
         return payload
     
     def get_event_payload(self, message):

@@ -226,7 +226,7 @@ class CustomerOrderCreateViews(CreateAPIView):
                 handle_log_engine(
                     request=request, action="CUSTOM OFFER CREATED", status=LogStatus.SUCCESS, message="Create a New Custom Order from Client", entity=instance,
                     perform_user=instance.provider.user, perform_user_type=UserDefault.PROVIDER,
-                    notify=True, logify=True,
+                    notify=True, logify=False,
                     role=UserRole.USER
                 )
                 return Response(
@@ -313,7 +313,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 )
             elif status == "cancel":
                 queryset = queryset.filter(
-                    status__in=[OrderStatus.CANCELLATION_REQUEST, OrderStatus.CANCELLED, OrderStatus.REFUND_REQUEST, OrderStatus.REFUND]
+                    status__in=[OrderStatus.CANCELLED, OrderStatus.REFUND_REQUEST, OrderStatus.REFUND]
                 )
 
         # ---- Search Filter ----
@@ -618,19 +618,31 @@ class CustomerOrderViewSet(UpdateModelViewSet):
             raise ValueError("Cancellation Reason/Message must be needed.")
         
         with transaction.atomic():
-            if order.status in [OrderStatus.PENDING, OrderStatus.ACCEPT] and order.payment_status == OrderPaymentStatus.UNPAID:
-                order.status = OrderStatus.CANCELLED
-                order.payment_status = OrderPaymentStatus.CANCELLED
-                response_message = "Order Cancelled"
-            elif order.status == OrderStatus.CANCELLATION_REQUEST:
+            if order.changes_requests.filter(changes_type=ChangesRequestType.CANCEL, status=OrderChangesRequestStatus.NO_RESPONSE).exists():
                 return Response(
                     {
                         "status": False,
                         "message": "Cancellation Request already Send!"
                     }, status=status.HTTP_400_BAD_REQUEST
                 )
+            
+            if order.status in [OrderStatus.PENDING, OrderStatus.ACCEPT] and order.payment_status == OrderPaymentStatus.UNPAID:
+                order.status = OrderStatus.CANCELLED
+                order.payment_status = OrderPaymentStatus.CANCELLED
+                order.cancel_at = timezone.now()
+                changes_object = OrderChangesRequest.objects.create(
+                    order=order,
+                    request_by=UserDefault.CUSTOMER,
+                    perform_by=UserDefault.CUSTOMER,
+                    status=OrderChangesRequestStatus.ACCEPT,
+                    changes_type=ChangesRequestType.CANCEL,
+                    changes_data={
+                        "message": message
+                    }
+                )
+                response_message = "Order Cancelled"
             elif order.status in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS] and order.payment_status == OrderPaymentStatus.PAID:
-                order.status = OrderStatus.CANCELLATION_REQUEST
+                order.order_change_action = OrderChangeRequestAction.CUSTOMER_CANCEL_REQUEST_SEND
                 changes_object = OrderChangesRequest.objects.create(
                     order=order,
                     request_by=UserDefault.CUSTOMER,
@@ -674,10 +686,9 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     
     @action(detail=True, methods=["post"], url_path="cancel-accept")
     def cancellation_accept(self, request, *args, **kwargs):
+        # data----
         order = self.get_object()
         data = request.data
-
-        # post data----
         request_id = data.get("changes_request_id", None)
         action = data.get("action", None)
 
@@ -702,18 +713,23 @@ class CustomerOrderViewSet(UpdateModelViewSet):
         with transaction.atomic():
             if action.upper() == OrderChangesRequestStatus.ACCEPT:
                 changes_request.status = OrderChangesRequestStatus.ACCEPT
+                changes_request.perform_by = UserDefault.CUSTOMER
                 changes_request.save()
-                
+
                 Order.objects.filter(pk=order.id).update(
                     status=OrderStatus.REFUND_REQUEST,
-                    payment_status=OrderPaymentStatus.REFUND
+                    payment_status=OrderPaymentStatus.REFUND,
+                    cancel_at=timezone.now(),
+                    order_change_action=OrderChangeRequestAction.NO_ACTION
                 )
-                OrderRefundRequest.objects.create(
+                refund, create = OrderRefundRequest.objects.get_or_create(
                     order=order,
-                    customer=order.customer,
-                    reason=changes_request.changes_data.get("message", None),
-                    order_amount=order.amount,
-                    refund_amount=get_refund_amount(order)
+                    defaults={
+                        "customer":order.customer,
+                        "reason":changes_request.changes_data.get("message", None),
+                        "order_amount":order.amount,
+                        "refund_amount":get_refund_amount(order)
+                    }
                 )
                 HelperSlotException.objects.filter(order=order).update(is_active=False)
                 response_message = "Order Cancelled Confirm & Refund Processing!"
@@ -728,6 +744,9 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 changes_request.status = OrderChangesRequestStatus.DECLINED
                 changes_request.save()
                 response_message = "Order Cancellation Declined!"
+
+                order.order_change_action = OrderChangeRequestAction.NO_ACTION
+                order.save()
 
                 handle_log_engine(
                     request=request, action="CANCELLATION REJECTED", status=LogStatus.SUCCESS, message="Order Cencellation Request Rejected By Customer.", entity=order,
@@ -858,7 +877,7 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 )
             elif status == "cancel":
                 queryset = queryset.filter(
-                    status__in=[OrderStatus.CANCELLATION_REQUEST, OrderStatus.CANCELLED, OrderStatus.REFUND_REQUEST, OrderStatus.REFUND]
+                    status__in=[OrderStatus.CANCELLED, OrderStatus.REFUND_REQUEST, OrderStatus.REFUND]
                 )
 
         # ---- Search Filter ----
@@ -1126,19 +1145,31 @@ class ProviderOrderViewSet(UpdateModelViewSet):
             raise ValueError("Cancellation Reason/Message must be needed.")
         
         with transaction.atomic():
-            if order.status in [OrderStatus.PENDING, OrderStatus.ACCEPT] and order.payment_status == OrderPaymentStatus.UNPAID:
-                order.status = OrderStatus.CANCELLED
-                order.payment_status = OrderPaymentStatus.CANCELLED
-                response_message = "Order Cancelled"
-            elif order.status == OrderStatus.CANCELLATION_REQUEST:
+            if order.changes_requests.filter(changes_type=ChangesRequestType.CANCEL, status=OrderChangesRequestStatus.NO_RESPONSE).exists():
                 return Response(
                     {
                         "status": False,
                         "message": "Cancellation Request already Send!"
                     }, status=status.HTTP_400_BAD_REQUEST
                 )
+
+            if order.status in [OrderStatus.PENDING, OrderStatus.ACCEPT] and order.payment_status == OrderPaymentStatus.UNPAID:
+                order.status = OrderStatus.CANCELLED
+                order.payment_status = OrderPaymentStatus.CANCELLED
+                order.cancel_at = timezone.now()
+                changes_object = OrderChangesRequest.objects.create(
+                    order=order,
+                    request_by=UserDefault.PROVIDER,
+                    perform_by=UserDefault.PROVIDER,
+                    status=OrderChangesRequestStatus.ACCEPT,
+                    changes_type=ChangesRequestType.CANCEL,
+                    changes_data={
+                        "message": message
+                    }
+                )
+                response_message = "Order Cancelled"
             elif order.status in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS] and order.payment_status == OrderPaymentStatus.PAID:
-                order.status = OrderStatus.CANCELLATION_REQUEST
+                order.order_change_action = OrderChangeRequestAction.PROVIDER_CANCEL_REQUEST_SEND
                 changes_object = OrderChangesRequest.objects.create(
                     order=order,
                     request_by=UserDefault.PROVIDER,
@@ -1182,10 +1213,9 @@ class ProviderOrderViewSet(UpdateModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="cancel-accept")
     def cancellation_accept(self, request, *args, **kwargs):
+        # data----
         order = self.get_object()
         data = request.data
-
-        # post data----
         request_id = data.get("changes_request_id", None)
         action = data.get("action", None)
 
@@ -1210,11 +1240,14 @@ class ProviderOrderViewSet(UpdateModelViewSet):
         with transaction.atomic():
             if action.upper() == OrderChangesRequestStatus.ACCEPT:
                 changes_request.status = OrderChangesRequestStatus.ACCEPT
+                changes_request.perform_by = UserDefault.PROVIDER
                 changes_request.save()
 
                 Order.objects.filter(pk=order.id).update(
                     status=OrderStatus.REFUND_REQUEST,
-                    payment_status=OrderPaymentStatus.REFUND
+                    payment_status=OrderPaymentStatus.REFUND,
+                    cancel_at=timezone.now(),
+                    order_change_action=OrderChangeRequestAction.NO_ACTION
                 )
                 OrderRefundRequest.objects.create(
                     order=order,
@@ -1225,7 +1258,6 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 )
                 HelperSlotException.objects.filter(order=order).update(is_active=False)
                 response_message = "Order Cancelled Confirm & Refund Processing!"
-
                 handle_log_engine(
                     request=request, action="CANCELLATION CONFIRM", status=LogStatus.SUCCESS, message="Order Cencellation Request Confirm By Provider.", entity=order,
                     perform_user=self.request.user, perform_user_type=UserDefault.PROVIDER,
@@ -1236,6 +1268,13 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 changes_request.status = OrderChangesRequestStatus.DECLINED
                 changes_request.save()
                 response_message = "Order Cancellation Declined!"
+
+                Order.objects.filter(pk=order.id).update(
+                    status=OrderStatus.REFUND_REQUEST,
+                    payment_status=OrderPaymentStatus.REFUND,
+                    cancel_at=timezone.now(),
+                    order_change_action=OrderChangeRequestAction.NO_ACTION
+                )
 
                 handle_log_engine(
                     request=request, action="CANCELLATION REJECTED", status=LogStatus.SUCCESS, message="Order Cencellation Request Rejected By Provider.", entity=order,

@@ -9,7 +9,7 @@ from django.contrib.contenttypes.models import ContentType
 import secrets
 import string
 from rest_framework.exceptions import ValidationError
-from django.db.models import Avg
+from django.db.models import Avg, Q
 
 # ============================================================
 # Category Models Section ===================
@@ -65,6 +65,7 @@ class Order(models.Model):
     accepted_at = models.DateTimeField(blank=True, null=True)
     started_at = models.DateTimeField(blank=True, null=True)
     completed_at = models.DateTimeField(blank=True, null=True)
+    cancel_at = models.DateTimeField(blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -75,7 +76,57 @@ class Order(models.Model):
     @property
     def end_datetime(self):
         return datetime.combine(self.working_date, self.working_start_time) + timedelta(hours=self.working_hour)
+
+    @property
+    def is_provider_review(self):
+        return self.order_review.filter(send_by=UserDefault.PROVIDER).exists()
     
+    @property
+    def is_customer_review(self):
+        return self.order_review.filter(send_by=UserDefault.CUSTOMER).exists()
+    
+    @property
+    def is_cancel_request(self):
+        return self.changes_requests.filter(changes_type=ChangesRequestType.CANCEL).exists()
+        
+    @property
+    def cancel_request_by(self):
+        request = self.changes_requests.filter(
+            changes_type=ChangesRequestType.CANCEL,
+            status__in=[
+                OrderChangesRequestStatus.ACCEPT,
+                OrderChangesRequestStatus.NO_RESPONSE,
+            ]
+        ).first()
+        if request:
+            return request.request_by
+        return None
+    
+    @property
+    def cancel_request_accept_by(self):
+        accept_by = self.changes_requests.filter(changes_type=ChangesRequestType.CANCEL).first().perform_by
+        if accept_by:
+            return accept_by or None
+        return None
+    
+    @property
+    def changes_request_pending(self):
+        change_request = OrderChangesRequest.objects.filter(
+            order=self, status=OrderChangesRequestStatus.NO_RESPONSE
+        ).first()
+        if change_request:
+            return {
+                "id": change_request.id,
+                "request_by": change_request.request_by,
+                "status": change_request.status,
+                "changes_type": change_request.changes_type,
+                "changes_data": change_request.changes_data,
+                "created_at": change_request.created_at,
+                "updated_at": change_request.updated_at
+            }
+        else:
+            return None
+
     def save(self, *args, **kwargs):
         is_status_changed = False
         if self.pk:
@@ -96,6 +147,7 @@ class OrderAttachment(models.Model):
 class OrderChangesRequest(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="changes_requests")
     request_by = models.CharField(max_length=20, default=UserDefault.CUSTOMER, choices=UserDefault.choices)
+    perform_by = models.CharField(max_length=20, choices=UserDefault.choices, blank=True, null=True)
     status = models.CharField(max_length=20, choices=OrderChangesRequestStatus.choices, default=OrderChangesRequestStatus.NO_RESPONSE)
     changes_type = models.CharField(max_length=30, choices=ChangesRequestType.choices, default=ChangesRequestType.AMOUNT)
     changes_data = models.JSONField(blank=True, null=True)

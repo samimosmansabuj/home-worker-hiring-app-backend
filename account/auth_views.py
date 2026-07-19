@@ -34,6 +34,7 @@ class PasswordLoginViews(TokenObtainPairView):
             user = serializer.get_user()
             data = serializer.validated_data
             data["default_profile"] = user.default_profile
+            data["email"] = user.email
 
             log_data = {
                 "action": "New Login",
