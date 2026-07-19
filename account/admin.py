@@ -227,7 +227,6 @@ class ServiceProviderAdmin(ModelAdmin):
                 "account_status",
                 "availability_status",
                 "is_verified",
-                "strike_count",
             )
         }),
 
@@ -316,7 +315,7 @@ class StrikeAdmin(ModelAdmin):
         "provider_name",
         "reason",
         "is_active",
-        "expires_at",
+        "expired_at",
         "created_at",
     )
 

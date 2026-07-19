@@ -4,6 +4,7 @@ from find_worker_config.model_choice import OrderStatus
 from .models import AdminWallet
 from django.db import transaction
 from account.models import ServiceProviderProfile
+from django.utils import timezone
 
 # -------------------
 # Ticket Reply Serializer
@@ -84,12 +85,23 @@ class HelperSerializer(serializers.ModelSerializer):
     reviews_and_ratings = serializers.SerializerMethodField(read_only=True)
     office_location = serializers.SerializerMethodField(read_only=True)
     distance_km = serializers.FloatField(read_only=True)
+    strike_count = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = ServiceProviderProfile
         fields = ["id", "company_name", "logo", "details", "hourly_rate", "min_booking_hours", "office_location", "strike_count", "account_status", "availability_status", "is_verified", "complete_rate", "total_jobs", "rating", "distance_km", "service_category", "portfolio", "reviews_and_ratings"]
         read_only_fields = ["office_location", "strike_count", "account_status", "is_verified", "complete_rate", "total_jobs", "rating"]
     
+    def get_strike_count(self, obj):
+        now = timezone.now()
+        obj.strikes.filter(
+            is_active=True,
+            expired_at__lte=now
+        ).update(is_active=False)
+        return obj.strikes.filter(
+            is_active=True
+        ).count()
+
     def get_reviews_and_ratings(self, obj):
         request = self.context.get("request")
         return [

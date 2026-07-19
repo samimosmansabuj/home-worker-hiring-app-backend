@@ -1,4 +1,4 @@
-from account.models import HelperSlotException, Address, User
+from account.models import HelperSlotException, Address, User, HelperStrike
 from .serializers import ServiceCategorySerializer, ServiceSubCategorySerializer, ReviewAndRatingSerializer, PaymentTransactionSerializer, CompleteSerializer, CounterSerializer, ProposeNewTimeActionSerializer, ProposeNewTimeSerializer, SetHourSerializer, OrderSerializerAll, StartWorkSerializer, ReviewAndRatingSerializer
 from find_worker_config.utils import UpdateModelViewSet, PaymentTransactionModule, UpdateReadOnlyModelViewSet
 from .models import ServiceCategory, ServiceSubCategory, Order, ReviewAndRating, PaymentTransaction, OrderRefundRequest, OrderChangesRequest
@@ -688,6 +688,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
     def cancellation_accept(self, request, *args, **kwargs):
         # data----
         order = self.get_object()
+        provider = order.provider
         data = request.data
         request_id = data.get("changes_request_id", None)
         action = data.get("action", None)
@@ -731,6 +732,16 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                         "refund_amount":get_refund_amount(order)
                     }
                 )
+
+                HelperStrike.objects.create(
+                    provider=provider,
+                    order=order,
+                    related_object=changes_request,
+                    reason=f"For Confirm Order Cancellation.",
+                    is_active=True,
+                    expired_at = timezone.now() + timedelta(days=90)
+                )
+                
                 HelperSlotException.objects.filter(order=order).update(is_active=False)
                 response_message = "Order Cancelled Confirm & Refund Processing!"
 

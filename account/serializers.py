@@ -379,11 +379,22 @@ class CurrentUserHelperSerializer(serializers.ModelSerializer):
     portfolio = serializers.SerializerMethodField(read_only=True)
     reviews_and_ratings = serializers.SerializerMethodField(read_only=True)
     office_location = serializers.SerializerMethodField(read_only=True)
+    strike_count = serializers.SerializerMethodField(read_only=True)
     class Meta:
         model = ServiceProviderProfile
         fields = ["id", "company_name", "logo", "details", "hourly_rate", "min_booking_hours", "office_location", "strike_count", "account_status", "availability_status", "is_verified", "complete_rate", "total_jobs", "rating", "service_category", "portfolio", "reviews_and_ratings"]
         read_only_fields = ["office_location", "strike_count", "account_status", "is_verified", "complete_rate", "total_jobs", "rating"]
     
+    def get_strike_count(self, obj):
+        now = timezone.now()
+        obj.strikes.filter(
+            is_active=True,
+            expired_at__lte=now
+        ).update(is_active=False)
+        return obj.strikes.filter(
+            is_active=True
+        ).count()
+
     def get_reviews_and_ratings(self, obj):
         request = self.context.get("request")
         return [

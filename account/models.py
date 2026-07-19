@@ -163,7 +163,6 @@ class ServiceProviderProfile(models.Model):
     hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     min_booking_hours = models.PositiveIntegerField(default=1)
 
-    strike_count = models.PositiveIntegerField(default=0)
     account_status = models.CharField(max_length=20, choices=HelperStatus.choices, default=HelperStatus.GOOD)
     availability_status = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
@@ -211,11 +210,16 @@ class ServiceProviderProfile(models.Model):
         return f"{self.user.username} - Provider Profile"
 
 class HelperStrike(models.Model):
-    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="strikes")
+    provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="strikes", blank=True, null=True)
+    order = models.ForeignKey("task.Order", on_delete=models.CASCADE, related_name="strikes", blank=True, null=True)
+    related_object = models.ForeignKey("task.OrderChangesRequest", on_delete=models.CASCADE, related_name="strikes", blank=True, null=True)
     reason = models.CharField(max_length=255)
     is_active = models.BooleanField(default=True)
-    expires_at = models.DateTimeField(null=True, blank=True)
+    expired_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        return super().save(*args, **kwargs)
 
 class HelperWeeklyAvailability(models.Model):
     provider = models.ForeignKey(ServiceProviderProfile, on_delete=models.CASCADE, related_name="weekly_availability")
