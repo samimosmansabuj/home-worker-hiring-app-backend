@@ -98,7 +98,7 @@ class LogActivityEngine:
                     **self.get_notification_data(notification_for, receiver, profile, notification_message)
                 )
                 # Need Logic For Dynamic Set
-                if receiver and profile:
+                if receiver:
                     push_notification(
                         user_id=notification.receiver.id,
                         data={
