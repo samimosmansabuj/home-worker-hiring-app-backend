@@ -87,14 +87,17 @@ class Order(models.Model):
     
     @property
     def is_cancel_request(self):
-        return self.changes_requests.filter(changes_type=ChangesRequestType.CANCEL).exists()
+        return self.changes_requests.filter(
+            changes_type=ChangesRequestType.CANCEL, status__in=[
+                OrderChangesRequestStatus.ACCEPT, OrderChangesRequestStatus.NO_RESPONSE
+            ]
+        ).exists()
         
     @property
     def cancel_request_by(self):
         request = self.changes_requests.filter(
             changes_type=ChangesRequestType.CANCEL,
             status__in=[
-                OrderChangesRequestStatus.ACCEPT,
                 OrderChangesRequestStatus.NO_RESPONSE,
             ]
         ).first()

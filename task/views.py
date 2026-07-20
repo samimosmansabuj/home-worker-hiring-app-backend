@@ -643,6 +643,7 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 response_message = "Order Cancelled"
             elif order.status in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS] and order.payment_status == OrderPaymentStatus.PAID:
                 order.order_change_action = OrderChangeRequestAction.CUSTOMER_CANCEL_REQUEST_SEND
+                order.status = OrderStatus.CANCELLATION_REQUEST
                 changes_object = OrderChangesRequest.objects.create(
                     order=order,
                     request_by=UserDefault.CUSTOMER,
@@ -709,7 +710,15 @@ class CustomerOrderViewSet(UpdateModelViewSet):
         changes_request = OrderChangesRequest.objects.get(pk=request_id)
         if changes_request.request_by == UserDefault.CUSTOMER:
             raise Exception("You can't perform this action")
+        if changes_request.status not in [OrderChangesRequestStatus.NO_RESPONSE]:
+            raise Exception(f"Order Request Already Perform!")
         
+        pending_cancel_request = OrderChangesRequest.objects.filter(
+            order=order, status=OrderChangesRequestStatus.NO_RESPONSE
+        ).first()
+        if pending_cancel_request != changes_request:
+            raise Exception("Wrong Request ID")
+
         # use logic---
         with transaction.atomic():
             if action.upper() == OrderChangesRequestStatus.ACCEPT:
@@ -756,8 +765,10 @@ class CustomerOrderViewSet(UpdateModelViewSet):
                 changes_request.save()
                 response_message = "Order Cancellation Declined!"
 
-                order.order_change_action = OrderChangeRequestAction.NO_ACTION
-                order.save()
+                Order.objects.filter(pk=order.id).update(
+                    status=OrderStatus.CONFIRM,
+                    order_change_action=OrderChangeRequestAction.NO_ACTION
+                )
 
                 handle_log_engine(
                     request=request, action="CANCELLATION REJECTED", status=LogStatus.SUCCESS, message="Order Cencellation Request Rejected By Customer.", entity=order,
@@ -1181,6 +1192,7 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 response_message = "Order Cancelled"
             elif order.status in [OrderStatus.CONFIRM, OrderStatus.IN_PROGRESS] and order.payment_status == OrderPaymentStatus.PAID:
                 order.order_change_action = OrderChangeRequestAction.PROVIDER_CANCEL_REQUEST_SEND
+                order.status = OrderStatus.CANCELLATION_REQUEST
                 changes_object = OrderChangesRequest.objects.create(
                     order=order,
                     request_by=UserDefault.PROVIDER,
@@ -1246,6 +1258,14 @@ class ProviderOrderViewSet(UpdateModelViewSet):
         changes_request = OrderChangesRequest.objects.get(pk=request_id)
         if changes_request.request_by == UserDefault.PROVIDER:
             raise Exception("You can't perform this action")
+        if changes_request.status not in [OrderChangesRequestStatus.NO_RESPONSE]:
+            raise Exception(f"Order Request Already Perform!")
+        
+        pending_cancel_request = OrderChangesRequest.objects.filter(
+            order=order, status=OrderChangesRequestStatus.NO_RESPONSE
+        ).first()
+        if pending_cancel_request != changes_request:
+            raise Exception("Wrong Request ID")
         
         # use logic---
         with transaction.atomic():
@@ -1279,11 +1299,9 @@ class ProviderOrderViewSet(UpdateModelViewSet):
                 changes_request.status = OrderChangesRequestStatus.DECLINED
                 changes_request.save()
                 response_message = "Order Cancellation Declined!"
-
+                
                 Order.objects.filter(pk=order.id).update(
-                    status=OrderStatus.REFUND_REQUEST,
-                    payment_status=OrderPaymentStatus.REFUND,
-                    cancel_at=timezone.now(),
+                    status=OrderStatus.CONFIRM,
                     order_change_action=OrderChangeRequestAction.NO_ACTION
                 )
 
